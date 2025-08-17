@@ -117,7 +117,11 @@ function findBracePairs(lines: string[]): BraceInfo[] {
             if (char === '{') {
                 // エスケープされた中括弧は無視
                 if (pos > 0 && line[pos - 1] === '\\') {
-                    continue;
+                    // ただし、\foreachなどのコマンドの中括弧は処理対象とする
+                    const beforeBrace = line.substring(0, pos);
+                    if (!beforeBrace.match(/\\(foreach|pgffor|for)\s*$/)) {
+                        continue;
+                    }
                 }
                 
                 // 開き括弧をスタックにプッシュ
@@ -178,14 +182,41 @@ function formatBraces(lines: string[], config: FormatConfig): string[] {
     // 複数行中括弧のインデント処理
     const braceInfos = findBracePairs(result);
     
-    // 後ろから処理して行番号のズレを防ぐ
+    // ネストレベルを計算するために中括弧ペアを開始行でソート
+    braceInfos.sort((a, b) => a.openLine - b.openLine);
+    
+    // 各行のネストレベルを計算
+    const lineNestLevels = new Array(result.length).fill(0);
+    
+    for (const braceInfo of braceInfos) {
+        const {openLine, closeLine, openPos, closePos} = braceInfo;
+        
+        // 開き括弧の行をチェック - 括弧で終わっているか（バックスラッシュも考慮）
+        const openLineText = result[openLine];
+        const afterBrace = openLineText.substring(openPos + 1).trim();
+        const isOpenLineEndsWithBrace = afterBrace === '' || afterBrace === '\\';
+        
+        // 閉じ括弧の行をチェック - 括弧で始まっているか
+        const closeLineText = result[closeLine];
+        const beforeBrace = closeLineText.substring(0, closePos).trim();
+        const isCloseLineStartsWithBrace = beforeBrace === '';
+        
+        // 両方の条件を満たす場合のみネストレベルを増加
+        if (isOpenLineEndsWithBrace && isCloseLineStartsWithBrace) {
+            for (let i = openLine + 1; i < closeLine; i++) {
+                lineNestLevels[i]++;
+            }
+        }
+    }
+    
+    // ネストレベルに基づいてインデントを適用
     for (const braceInfo of braceInfos.reverse()) {
         const {openLine, closeLine, openPos, closePos, baseIndent} = braceInfo;
         
-        // 開き括弧の行をチェック - 括弧で終わっているか
+        // 開き括弧の行をチェック - 括弧で終わっているか（バックスラッシュも考慮）
         const openLineText = result[openLine];
         const afterBrace = openLineText.substring(openPos + 1).trim();
-        const isOpenLineEndsWithBrace = afterBrace === '';
+        const isOpenLineEndsWithBrace = afterBrace === '' || afterBrace === '\\';
         
         // 閉じ括弧の行をチェック - 括弧で始まっているか
         const closeLineText = result[closeLine];
@@ -200,7 +231,8 @@ function formatBraces(lines: string[], config: FormatConfig): string[] {
                 const trimmed = line.trim();
                 
                 if (trimmed !== '') {
-                    const innerIndent = createIndent(1, config);
+                    const nestLevel = lineNestLevels[i];
+                    const innerIndent = createIndent(nestLevel, config);
                     result[i] = baseIndent + innerIndent + trimmed;
                 } else {
                     result[i] = '';
@@ -208,7 +240,8 @@ function formatBraces(lines: string[], config: FormatConfig): string[] {
             }
             
             // 閉じ括弧を適切な位置に配置
-            result[closeLine] = baseIndent + '}';
+            const closeBraceAfter = closeLineText.substring(closePos + 1);
+            result[closeLine] = baseIndent + '}' + closeBraceAfter;
         }
     }
     
@@ -447,12 +480,13 @@ function breakBeforeEnvironments(lines: string[], config: FormatConfig): string[
             if (before.trim()) {
                 // \begin{}の前にコンテンツがある場合
                 result.push(before.trimEnd());
-                currentLine = indent + `\\begin{${envType}}` + after;
+                currentLine = indent + `\\begin{${envType}}`;
                 hasChanges = true;
             }
             
+            // \begin{}の後にコンテンツがある場合は改行しない
+            // 単に改行だけ追加
             if (after.trim()) {
-                // \begin{}の後にコンテンツがある場合
                 result.push(indent + `\\begin{${envType}}`);
                 currentLine = indent + createIndent(1, config) + after.trim();
                 hasChanges = true;
@@ -468,14 +502,13 @@ function breakBeforeEnvironments(lines: string[], config: FormatConfig): string[
             if (before.trim()) {
                 // \end{}の前にコンテンツがある場合
                 result.push(before.trimEnd());
-                currentLine = indent + `\\end{${envType}}` + after;
+                currentLine = indent + `\\end{${envType}}`;
                 hasChanges = true;
             }
             
+            // \end{}の後は改行しない
             if (after.trim()) {
-                // \end{}の後にコンテンツがある場合
-                result.push(indent + `\\end{${envType}}`);
-                currentLine = after.trim();
+                currentLine = indent + `\\end{${envType}}` + after;
                 hasChanges = true;
             }
         }
