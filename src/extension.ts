@@ -29,6 +29,7 @@ interface FormatConfig {
     maxConsecutiveBlankLines: number;
     trimTrailingWhitespace: boolean;
     formatBraces: boolean;
+    breakBeforeEnvironments: boolean;
 }
 
 /**
@@ -412,6 +413,84 @@ function findEnvironments(document: vscode.TextDocument | {getText(): string}): 
 }
 
 /**
+ * \begin{}と\end{}の前で自動改行
+ */
+function breakBeforeEnvironments(lines: string[], config: FormatConfig): string[] {
+    if (!config.breakBeforeEnvironments) {
+        return lines;
+    }
+    
+    const result: string[] = [];
+    
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        
+        // コメント行はそのまま
+        if (line.trim().startsWith('%')) {
+            result.push(line);
+            continue;
+        }
+        
+        // \begin{環境}や\end{環境}を含む行を処理
+        const beginPattern = /(.*?)\\begin\{([^}]+)\}(.*)/;
+        const endPattern = /(.*?)\\end\{([^}]+)\}(.*)/;
+        
+        let currentLine = line;
+        let hasChanges = false;
+        
+        // \begin{}の前後で改行
+        const beginMatch = currentLine.match(beginPattern);
+        if (beginMatch) {
+            const [, before, envType, after] = beginMatch;
+            const indent = line.match(/^(\s*)/)?.[1] || '';
+            
+            if (before.trim()) {
+                // \begin{}の前にコンテンツがある場合
+                result.push(before.trimEnd());
+                currentLine = indent + `\\begin{${envType}}` + after;
+                hasChanges = true;
+            }
+            
+            if (after.trim()) {
+                // \begin{}の後にコンテンツがある場合
+                result.push(indent + `\\begin{${envType}}`);
+                currentLine = indent + createIndent(1, config) + after.trim();
+                hasChanges = true;
+            }
+        }
+        
+        // \end{}の前後で改行
+        const endMatch = currentLine.match(endPattern);
+        if (endMatch) {
+            const [, before, envType, after] = endMatch;
+            const indent = line.match(/^(\s*)/)?.[1] || '';
+            
+            if (before.trim()) {
+                // \end{}の前にコンテンツがある場合
+                result.push(before.trimEnd());
+                currentLine = indent + `\\end{${envType}}` + after;
+                hasChanges = true;
+            }
+            
+            if (after.trim()) {
+                // \end{}の後にコンテンツがある場合
+                result.push(indent + `\\end{${envType}}`);
+                currentLine = after.trim();
+                hasChanges = true;
+            }
+        }
+        
+        if (!hasChanges) {
+            result.push(line);
+        } else {
+            result.push(currentLine);
+        }
+    }
+    
+    return result;
+}
+
+/**
  * \begin{}\end{}環境のインデント処理
  */
 function formatEnvironmentIndentation(lines: string[], config: FormatConfig): string[] {
@@ -594,7 +673,8 @@ function getFormatConfig(): FormatConfig {
         preserveBlankLines: config.get<boolean>('preserveBlankLines', true),
         maxConsecutiveBlankLines: config.get<number>('maxConsecutiveBlankLines', 1),
         trimTrailingWhitespace: config.get<boolean>('trimTrailingWhitespace', true),
-        formatBraces: config.get<boolean>('formatBraces', true)
+        formatBraces: config.get<boolean>('formatBraces', true),
+        breakBeforeEnvironments: config.get<boolean>('breakBeforeEnvironments', false)
     };
 }
 
@@ -632,12 +712,17 @@ async function formatLaTeXDocument(): Promise<void> {
             lines = limitConsecutiveBlankLines(lines, config.maxConsecutiveBlankLines);
         }
         
-        // 3. 中括弧のフォーマット
+        // 3. 環境の自動改行
+        if (config.breakBeforeEnvironments) {
+            lines = breakBeforeEnvironments(lines, config);
+        }
+        
+        // 4. 中括弧のフォーマット
         if (config.formatBraces) {
             lines = formatBraces(lines, config);
         }
         
-        // 4. 表組み環境の整列
+        // 5. 表組み環境の整列
         if (config.alignEnvironments) {
             const tempDocument = {
                 getText: () => lines.join('\n')
@@ -656,17 +741,17 @@ async function formatLaTeXDocument(): Promise<void> {
             }
         }
         
-        // 5. 環境のインデント処理
+        // 6. 環境のインデント処理
         if (config.indentEnvironments) {
             lines = formatEnvironmentIndentation(lines, config);
         }
         
-        // 6. 基本的なインデント処理
+        // 7. 基本的なインデント処理
         if (config.indentEnvironments) {
             lines = applyBasicIndentation(lines, config);
         }
         
-        // 6. 長い行の折り返し
+        // 8. 長い行の折り返し
         if (config.maxLineLength > 0) {
             lines = wrapLongLines(lines, config.maxLineLength);
         }
@@ -714,6 +799,10 @@ async function formatLaTeXDocumentSync(document: vscode.TextDocument): Promise<v
         
         if (config.maxConsecutiveBlankLines >= 0) {
             lines = limitConsecutiveBlankLines(lines, config.maxConsecutiveBlankLines);
+        }
+        
+        if (config.breakBeforeEnvironments) {
+            lines = breakBeforeEnvironments(lines, config);
         }
         
         if (config.formatBraces) {

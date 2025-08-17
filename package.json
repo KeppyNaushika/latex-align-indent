@@ -96,6 +96,11 @@
           "default": true,
           "description": "中括弧のフォーマットを行う"
         },
+        "latex-align-indent.breakBeforeEnvironments": {
+          "type": "boolean",
+          "default": false,
+          "description": "\\begin{}と\\end{}の前で自動改行を行う"
+        },
         "latex-align-indent.maxLineLength": {
           "type": "number",
           "default": 0,
