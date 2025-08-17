@@ -1,0 +1,147 @@
+{
+  "name": "latex-align-indent",
+  "displayName": "LaTeX Align Indent",
+  "description": "LaTeX Align Indent （全角文字対応）",
+  "version": "0.0.2",
+  "publisher": "keppy",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/keppy/latex-align-indent"
+  },
+  "engines": {
+    "vscode": "^1.60.0"
+  },
+  "categories": [
+    "Formatters",
+    "Other"
+  ],
+  "activationEvents": [
+    "onLanguage:latex"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "latex",
+        "aliases": ["LaTeX", "latex", "TeX"],
+        "extensions": [".tex", ".latex", ".ltx"]
+      }
+    ],
+    "commands": [
+      {
+        "command": "latex-align-indent.formatDocument",
+        "title": "LaTeX文書をフォーマット",
+        "category": "LaTeX"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "latex-align-indent.formatDocument",
+        "key": "ctrl+shift+i",
+        "mac": "cmd+shift+i",
+        "when": "editorTextFocus && resourceExtname == .tex"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "when": "resourceExtname == .tex",
+          "command": "latex-align-indent.formatDocument",
+          "group": "1_modification"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "latex-align-indent.formatDocument",
+          "when": "resourceExtname == .tex"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "LaTeX Align Indent",
+      "properties": {
+        "latex-align-indent.formatOnSave": {
+          "type": "boolean",
+          "default": false,
+          "description": "保存時に自動フォーマットを実行"
+        },
+        "latex-align-indent.alignEnvironments": {
+          "type": "boolean",
+          "default": true,
+          "description": "表組み環境の整列を行う"
+        },
+        "latex-align-indent.indentEnvironments": {
+          "type": "boolean",
+          "default": true,
+          "description": "環境のインデントを行う"
+        },
+        "latex-align-indent.indentInsideEnvironments": {
+          "type": "boolean",
+          "default": true,
+          "description": "環境内でのインデントを行う"
+        },
+        "latex-align-indent.maxConsecutiveBlankLines": {
+          "type": "number",
+          "default": 1,
+          "description": "連続する空行の最大数"
+        },
+        "latex-align-indent.trimTrailingWhitespace": {
+          "type": "boolean",
+          "default": true,
+          "description": "行末の空白を削除する"
+        },
+        "latex-align-indent.formatBraces": {
+          "type": "boolean",
+          "default": true,
+          "description": "中括弧のフォーマットを行う"
+        },
+        "latex-align-indent.maxLineLength": {
+          "type": "number",
+          "default": 0,
+          "description": "最大行長（0で無効）"
+        },
+        "latex-align-indent.preserveBlankLines": {
+          "type": "boolean",
+          "default": true,
+          "description": "空行を保持する"
+        },
+        "latex-align-indent.environments": {
+          "type": "array",
+          "default": [
+            "align",
+            "align*",
+            "tabular",
+            "tabular*",
+            "array",
+            "array*",
+            "alignat",
+            "alignat*",
+            "gather",
+            "gather*",
+            "multline",
+            "multline*",
+            "eqnarray",
+            "eqnarray*"
+          ],
+          "description": "整列対象の環境"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src --ext ts",
+    "test": "node ./out/test/runTest.js"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.10",
+    "@types/node": "18.x",
+    "@types/vscode": "^1.60.0",
+    "mocha": "^10.2.0",
+    "typescript": "^5.9.2"
+  }
+}
