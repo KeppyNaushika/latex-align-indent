@@ -6,56 +6,56 @@
 
   % Problem case 1: foreach loop - unindented
   \foreach \x in {-15,-14,...,15} {
-      \draw[dash pattern=on 0 off .25mm, line cap=round] (\x,-15.25) -- (\x,15.25);
+  \draw[dash pattern=on 0 off .25mm, line cap=round] (\x,-15.25) -- (\x,15.25);
   }\
 
   % Problem case 2: Complex newcommand - unindented
   \newcommand{\drawInCoordinatePlane}[7]{
-      % #1: fx (関数の式、例: \x+2)
-      % #2: x_min
-      % #3: x_max
-      % #4: y_min
-      % #5: y_max
-      % #6: node_option (例: above right)
-      % #7: text (例: $y=x+2$)
+  % #1: fx (関数の式、例: \x+2)
+  % #2: x_min
+  % #3: x_max
+  % #4: y_min
+  % #5: y_max
+  % #6: node_option (例: above right)
+  % #7: text (例: $y=x+2$)
 
-      % clippingして関数を描画
-      \begin{scope}
-      \clip (#2,#4) rectangle (#3,#5);
-      \draw[thick, domain=#2:#3] plot (\x, {#1});
-      \end{scope}
+  % clippingして関数を描画
+  \begin{scope}
+    \clip (#2,#4) rectangle (#3,#5);
+    \draw[thick, domain=#2:#3] plot (\x, {#1});
+  \end{scope}
 
-      % x=#3での関数値を直接計算
-      \pgfmathsetmacro{\xmax}{#3}
-      \def\x{#3}
-      \pgfmathsetmacro{\yatxmax}{#1}
+  % x=#3での関数値を直接計算
+  \pgfmathsetmacro{\xmax}{#3}
+  \def\x{#3}
+  \pgfmathsetmacro{\yatxmax}{#1}
 
-      % 範囲チェックとnode位置決定
-      \pgfmathparse{\yatxmax > #5 ? 1 : (\yatxmax < #4 ? -1 : 0)}
-      \pgfmathtruncatemacro{\rangecheck}{\pgfmathresult}
+  % 範囲チェックとnode位置決定
+  \pgfmathparse{\yatxmax > #5 ? 1 : (\yatxmax < #4 ? -1 : 0)}
+  \pgfmathtruncatemacro{\rangecheck}{\pgfmathresult}
 
-      \ifnum\rangecheck=0
-      % 範囲内の場合
-      \node[#6] at (#3,\yatxmax) {#7};
-      \else
-      % 範囲外の場合、f(x) = y_target となるx座標を計算
-      \pgfmathsetmacro{\ytarget}{\rangecheck > 0 ? #5 : #4}
+  \ifnum\rangecheck=0
+  % 範囲内の場合
+  \node[#6] at (#3,\yatxmax) {#7};
+  \else
+  % 範囲外の場合、f(x) = y_target となるx座標を計算
+  \pgfmathsetmacro{\ytarget}{\rangecheck > 0 ? #5 : #4}
 
-      % 一次関数 f(x) = ax + b から係数を抽出
-      % #1の形式に応じて係数を求める
-      \pgfmathsetmacro{\slope}{#1}  % まずx=1で計算
-      \def\x{1}
-      \pgfmathsetmacro{\atone}{#1}  % f(1)を計算
-      \def\x{0}
-      \pgfmathsetmacro{\atzero}{#1} % f(0) = bを計算
-      \pgfmathsetmacro{\slope}{\atone - \atzero}  % a = f(1) - f(0)
-      \pgfmathsetmacro{\intercept}{\atzero}       % b = f(0)
+  % 一次関数 f(x) = ax + b から係数を抽出
+  % #1の形式に応じて係数を求める
+  \pgfmathsetmacro{\slope}{#1}  % まずx=1で計算
+  \def\x{1}
+  \pgfmathsetmacro{\atone}{#1}  % f(1)を計算
+  \def\x{0}
+  \pgfmathsetmacro{\atzero}{#1} % f(0) = bを計算
+  \pgfmathsetmacro{\slope}{\atone - \atzero}  % a = f(1) - f(0)
+  \pgfmathsetmacro{\intercept}{\atzero}       % b = f(0)
 
-      % f(x) = y_target となるx座標を計算: x = (y_target - b) / a
-      \pgfmathsetmacro{\xintersect}{(\ytarget - \intercept) / \slope}
+  % f(x) = y_target となるx座標を計算: x = (y_target - b) / a
+  \pgfmathsetmacro{\xintersect}{(\ytarget - \intercept) / \slope}
 
-      \node[#6] at (\xintersect,\ytarget) {#7};
-      \fi
+  \node[#6] at (\xintersect,\ytarget) {#7};
+  \fi
   }\
 
 \end{document}

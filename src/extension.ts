@@ -1,5 +1,17 @@
 import * as vscode from 'vscode';
 
+// Global output channel for logging
+let outputChannel: vscode.OutputChannel;
+
+/**
+ * Helper function for logging to VS Code Output panel
+ */
+function log(message: string): void {
+    if (outputChannel) {
+        outputChannel.appendLine(message);
+    }
+}
+
 interface EnvironmentInfo {
     start: number;
     end: number;
@@ -225,6 +237,8 @@ function formatBraces(lines: string[], config: FormatConfig): string[] {
         
         // 両方の条件を満たす場合のみインデント処理を実行
         if (isOpenLineEndsWithBrace && isCloseLineStartsWithBrace) {
+            log(`formatBraces: Processing brace pair ${openLine + 1}-${closeLine + 1}`);
+            
             // 中括弧内の行をインデント
             for (let i = openLine + 1; i < closeLine; i++) {
                 const line = result[i];
@@ -234,6 +248,7 @@ function formatBraces(lines: string[], config: FormatConfig): string[] {
                     const nestLevel = lineNestLevels[i];
                     const innerIndent = createIndent(nestLevel, config);
                     result[i] = innerIndent + trimmed;
+                    log(`  formatBraces: Line ${i + 1} (nest ${nestLevel}) -> "${result[i]}"`);
                 } else {
                     result[i] = '';
                 }
@@ -696,6 +711,11 @@ function getFormatConfig(): FormatConfig {
     const latexTabSize = latexConfig.get<number>('editor.tabSize');
     const defaultTabSize = editorConfig.get<number>('tabSize', 4);
     
+    log('DEBUG: getFormatConfig');
+    log(`  latexTabSize: ${latexTabSize}`);
+    log(`  defaultTabSize: ${defaultTabSize}`);
+    log(`  final tabSize: ${latexTabSize || defaultTabSize}`);
+    
     return {
         useSpaces: editorConfig.get<boolean>('insertSpaces', true),
         tabSize: latexTabSize || defaultTabSize,
@@ -735,6 +755,14 @@ async function formatLaTeXDocument(): Promise<void> {
         const text = document.getText();
         let lines = text.split('\n');
         
+        log('=== DEBUG: formatLaTeXDocumentSync started ===');
+        log(`config.formatBraces: ${config.formatBraces}`);
+        log(`config.indentEnvironments: ${config.indentEnvironments}`);
+        log(`config.useSpaces: ${config.useSpaces}`);
+        log(`config.tabSize: ${config.tabSize}`);
+        log('Original lines (first 10):');
+        lines.slice(0, 10).forEach((line, i) => log(`  ${i + 1}: "${line}"`));
+        
         // 1. 行末空白の削除
         if (config.trimTrailingWhitespace) {
             lines = trimTrailingWhitespace(lines);
@@ -751,8 +779,15 @@ async function formatLaTeXDocument(): Promise<void> {
         }
         
         // 4. 中括弧のフォーマット
+        log('=== DEBUG: Step 4 - formatBraces ===');
+        log(`config.formatBraces: ${config.formatBraces}`);
         if (config.formatBraces) {
+            log('Calling formatBraces...');
             lines = formatBraces(lines, config);
+            log('After formatBraces (first 15 lines):');
+            lines.slice(0, 15).forEach((line, i) => log(`  ${i + 1}: "${line}"`));
+        } else {
+            log('Skipping formatBraces');
         }
         
         // 5. 表組み環境の整列
@@ -775,13 +810,25 @@ async function formatLaTeXDocument(): Promise<void> {
         }
         
         // 6. 環境のインデント処理 (formatBracesが有効な場合はスキップ)
+        log('=== DEBUG: Step 6 - formatEnvironmentIndentation ===');
+        log(`config.indentEnvironments: ${config.indentEnvironments}`);
+        log(`config.formatBraces: ${config.formatBraces}`);
+        log(`Should run formatEnvironmentIndentation: ${config.indentEnvironments && !config.formatBraces}`);
         if (config.indentEnvironments && !config.formatBraces) {
+            log('Calling formatEnvironmentIndentation...');
             lines = formatEnvironmentIndentation(lines, config);
+        } else {
+            log('Skipping formatEnvironmentIndentation');
         }
         
         // 7. 基本的なインデント処理 (formatBracesが有効な場合はスキップ)
+        log('=== DEBUG: Step 7 - applyBasicIndentation ===');
+        log(`Should run applyBasicIndentation: ${config.indentEnvironments && !config.formatBraces}`);
         if (config.indentEnvironments && !config.formatBraces) {
+            log('Calling applyBasicIndentation...');
             lines = applyBasicIndentation(lines, config);
+        } else {
+            log('Skipping applyBasicIndentation');
         }
         
         // 8. 長い行の折り返し
@@ -790,6 +837,9 @@ async function formatLaTeXDocument(): Promise<void> {
         }
         
         const newContent = lines.join('\n');
+        
+        log('=== DEBUG: Final result (first 15 lines) ===');
+        lines.slice(0, 15).forEach((line, i) => log(`  ${i + 1}: "${line}"`));
         
         // ドキュメント全体を置換
         await editor.edit((editBuilder: vscode.TextEditorEdit) => {
@@ -811,7 +861,7 @@ async function formatLaTeXDocument(): Promise<void> {
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         vscode.window.showErrorMessage(`エラーが発生しました: ${message}`);
-        console.error('LaTeX format error:', error);
+        log(`LaTeX format error: ${error}`);
     }
 }
 
@@ -883,7 +933,7 @@ async function formatLaTeXDocumentSync(document: vscode.TextDocument): Promise<v
         return [vscode.TextEdit.replace(fullRange, newContent)];
         
     } catch (error) {
-        console.error('LaTeX format error:', error);
+        log(`LaTeX format error: ${error}`);
         return [];
     }
 }
@@ -924,7 +974,7 @@ class LaTeXDiagnosticProvider {
             
             this.diagnostics.set(document.uri, diagnostics);
         } catch (error) {
-            console.error('LaTeX diagnostic error:', error);
+            log(`LaTeX diagnostic error: ${error}`);
         }
     }
     
@@ -946,15 +996,15 @@ class LaTeXFormattingProvider implements vscode.DocumentFormattingEditProvider, 
         options: vscode.FormattingOptions,
         token: vscode.CancellationToken
     ): Promise<vscode.TextEdit[]> {
-        console.log('LaTeX Align Indent: Document formatting requested for:', document.fileName);
-        console.log('Document language ID:', document.languageId);
+        log(`LaTeX Align Indent: Document formatting requested for: ${document.fileName}`);
+        log(`Document language ID: ${document.languageId}`);
         
         try {
             const edits = await formatLaTeXDocumentSync(document);
-            console.log('LaTeX Align Indent: Formatting completed, edits:', edits.length);
+            log(`LaTeX Align Indent: Formatting completed, edits: ${edits.length}`);
             return edits;
         } catch (error) {
-            console.error('LaTeX Align Indent: Formatting error:', error);
+            log(`LaTeX Align Indent: Formatting error: ${error}`);
             vscode.window.showErrorMessage(`フォーマットエラー: ${error}`);
             return [];
         }
@@ -966,7 +1016,7 @@ class LaTeXFormattingProvider implements vscode.DocumentFormattingEditProvider, 
         options: vscode.FormattingOptions,
         token: vscode.CancellationToken
     ): Promise<vscode.TextEdit[]> {
-        console.log('LaTeX Align Indent: Range formatting requested for:', document.fileName);
+        log(`LaTeX Align Indent: Range formatting requested for: ${document.fileName}`);
         return await this.provideDocumentFormattingEdits(document, options, token);
     }
 }
@@ -991,7 +1041,11 @@ function setupAutoFormat(context: vscode.ExtensionContext): void {
  * 拡張機能の活性化
  */
 export function activate(context: vscode.ExtensionContext): void {
-    console.log('LaTeX Align Indent extension is being activated');
+    // Create output channel for logging
+    outputChannel = vscode.window.createOutputChannel('LaTeX Align Indent');
+    context.subscriptions.push(outputChannel);
+    
+    log('LaTeX Align Indent extension is being activated');
 
     // 診断プロバイダーを作成
     const diagnosticProvider = new LaTeXDiagnosticProvider();
@@ -1068,8 +1122,8 @@ export function activate(context: vscode.ExtensionContext): void {
     // 保存時の自動処理を設定
     setupAutoFormat(context);
 
-    console.log('LaTeX Align Indent extension is now active!');
-    console.log('Registered formatters for:', latexSelectors);
+    log('LaTeX Align Indent extension is now active!');
+    log(`Registered formatters for: ${JSON.stringify(latexSelectors)}`);
     
     // アクティベーション確認
     vscode.window.showInformationMessage('LaTeX Align Indent が正常にアクティブになりました');
@@ -1079,5 +1133,8 @@ export function activate(context: vscode.ExtensionContext): void {
  * 拡張機能の非活性化
  */
 export function deactivate(): void {
-    console.log('LaTeX Align Indent extension is being deactivated');
+    log('LaTeX Align Indent extension is being deactivated');
+    if (outputChannel) {
+        outputChannel.dispose();
+    }
 }
