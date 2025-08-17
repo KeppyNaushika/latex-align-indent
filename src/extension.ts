@@ -233,7 +233,7 @@ function formatBraces(lines: string[], config: FormatConfig): string[] {
                 if (trimmed !== '') {
                     const nestLevel = lineNestLevels[i];
                     const innerIndent = createIndent(nestLevel, config);
-                    result[i] = baseIndent + innerIndent + trimmed;
+                    result[i] = innerIndent + trimmed;
                 } else {
                     result[i] = '';
                 }
@@ -241,7 +241,7 @@ function formatBraces(lines: string[], config: FormatConfig): string[] {
             
             // 閉じ括弧を適切な位置に配置
             const closeBraceAfter = closeLineText.substring(closePos + 1);
-            result[closeLine] = baseIndent + '}' + closeBraceAfter;
+            result[closeLine] = '}' + closeBraceAfter;
         }
     }
     
