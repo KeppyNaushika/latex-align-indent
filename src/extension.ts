@@ -774,13 +774,13 @@ async function formatLaTeXDocument(): Promise<void> {
             }
         }
         
-        // 6. 環境のインデント処理
-        if (config.indentEnvironments) {
+        // 6. 環境のインデント処理 (formatBracesが有効な場合はスキップ)
+        if (config.indentEnvironments && !config.formatBraces) {
             lines = formatEnvironmentIndentation(lines, config);
         }
         
-        // 7. 基本的なインデント処理
-        if (config.indentEnvironments) {
+        // 7. 基本的なインデント処理 (formatBracesが有効な場合はスキップ)
+        if (config.indentEnvironments && !config.formatBraces) {
             lines = applyBasicIndentation(lines, config);
         }
         
