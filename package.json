@@ -10,7 +10,7 @@
     "url": "https://github.com/KeppyNaushika/latex-align-indent"
   },
   "engines": {
-    "vscode": "^1.60.0"
+    "vscode": "^1.105.0"
   },
   "categories": [
     "Formatters",
