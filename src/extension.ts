@@ -129,9 +129,9 @@ function findBracePairs(lines: string[]): BraceInfo[] {
             if (char === '{') {
                 // エスケープされた中括弧は無視
                 if (pos > 0 && line[pos - 1] === '\\') {
-                    // ただし、\foreachなどのコマンドの中括弧は処理対象とする
+                    // ただし、特定のコマンドの中括弧は処理対象とする
                     const beforeBrace = line.substring(0, pos);
-                    if (!beforeBrace.match(/\\(foreach|pgffor|for)\s*$/)) {
+                    if (!beforeBrace.match(/\\(foreach|pgffor|for|newcommand|renewcommand|def|begin|end)\s*$/)) {
                         continue;
                     }
                 }
@@ -171,6 +171,205 @@ function findBracePairs(lines: string[]): BraceInfo[] {
 /**
  * 中括弧のフォーマット
  */
+/**
+ * 統一されたネストレベル計算（中括弧 + begin/end環境）
+ */
+function calculateUnifiedNestLevels(lines: string[]): number[] {
+    const nestLevels = new Array(lines.length).fill(0);
+    
+    // 文書構造の環境（インデントしない）
+    const documentStructures = ['document', 'abstract', 'article', 'book', 'report'];
+    
+    // 構造の開始と終了位置を記録
+    interface StructureRange {
+        type: 'brace' | 'environment';
+        name?: string;
+        startLine: number;
+        endLine: number;
+        level: number;
+    }
+    const structures: StructureRange[] = [];
+    
+    // 1. 全ての構造を検出
+    let currentLevel = 0;
+    const stack: Array<{type: 'brace' | 'environment', name?: string, startLine: number, level: number}> = [];
+    
+    for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+        const line = lines[lineIndex];
+        const trimmed = line.trim();
+        
+        // コメント行はスキップ
+        if (trimmed.startsWith('%')) {
+            continue;
+        }
+        
+        let pos = 0;
+        
+        while (pos < line.length) {
+            // \begin{} を検出
+            const beginMatch = line.substring(pos).match(/^\\begin\{([^}]+)\}/);
+            if (beginMatch) {
+                const envName = beginMatch[1];
+                if (!documentStructures.includes(envName)) {
+                    stack.push({
+                        type: 'environment',
+                        name: envName,
+                        startLine: lineIndex,
+                        level: currentLevel
+                    });
+                    currentLevel++;
+                    log(`  Found \\begin{${envName}} at line ${lineIndex + 1}, level ${currentLevel}`);
+                }
+                pos += beginMatch[0].length;
+                continue;
+            }
+            
+            // \end{} を検出
+            const endMatch = line.substring(pos).match(/^\\end\{([^}]+)\}/);
+            if (endMatch) {
+                const envName = endMatch[1];
+                if (!documentStructures.includes(envName)) {
+                    // スタックから対応する環境を探す
+                    for (let i = stack.length - 1; i >= 0; i--) {
+                        if (stack[i].type === 'environment' && stack[i].name === envName) {
+                            structures.push({
+                                type: 'environment',
+                                name: envName,
+                                startLine: stack[i].startLine,
+                                endLine: lineIndex,
+                                level: stack[i].level + 1
+                            });
+                            stack.splice(i, 1);
+                            currentLevel = Math.max(0, currentLevel - 1);
+                            log(`  Found \\end{${envName}} at line ${lineIndex + 1}, level ${currentLevel}`);
+                            break;
+                        }
+                    }
+                }
+                pos += endMatch[0].length;
+                continue;
+            }
+            
+            const char = line[pos];
+            
+            // エスケープ処理
+            if (char === '\\') {
+                pos += 2;
+                continue;
+            }
+            
+            // 中括弧処理
+            if (char === '{') {
+                const beforeBrace = line.substring(0, pos);
+                log(`  Line ${lineIndex + 1}, pos ${pos}: Found '{', beforeBrace: "${beforeBrace}"`);
+                const regexMatch = beforeBrace.match(/\\(foreach|pgffor|for|newcommand|renewcommand|def)(\s.*)?$/);
+                if (regexMatch) {
+                    log(`  Line ${lineIndex + 1}: Matched LaTeX command brace! Command: ${regexMatch[1]}`);
+                    // 同じ行に対応する閉じ括弧があるかチェック
+                    const remainingLine = line.substring(pos + 1);
+                    let braceCount = 1;
+                    let checkPos = 0;
+                    let foundClosingBrace = false;
+                    let closingLine = lineIndex;
+                    
+                    // まず同じ行で閉じ括弧を探す
+                    while (checkPos < remainingLine.length && braceCount > 0) {
+                        if (remainingLine[checkPos] === '\\') {
+                            checkPos += 2;
+                            continue;
+                        }
+                        if (remainingLine[checkPos] === '{') {
+                            braceCount++;
+                        } else if (remainingLine[checkPos] === '}') {
+                            braceCount--;
+                            if (braceCount === 0) {
+                                foundClosingBrace = true;
+                                break;
+                            }
+                        }
+                        checkPos++;
+                    }
+                    
+                    // 同じ行に閉じ括弧がない場合、後続の行で探す
+                    if (!foundClosingBrace) {
+                        for (let searchLine = lineIndex + 1; searchLine < lines.length; searchLine++) {
+                            const searchLineText = lines[searchLine];
+                            for (let searchPos = 0; searchPos < searchLineText.length; searchPos++) {
+                                if (searchLineText[searchPos] === '\\') {
+                                    searchPos++;
+                                    continue;
+                                }
+                                if (searchLineText[searchPos] === '{') {
+                                    braceCount++;
+                                } else if (searchLineText[searchPos] === '}') {
+                                    braceCount--;
+                                    if (braceCount === 0) {
+                                        foundClosingBrace = true;
+                                        closingLine = searchLine;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (foundClosingBrace) break;
+                        }
+                        
+                        if (foundClosingBrace) {
+                            stack.push({
+                                type: 'brace',
+                                startLine: lineIndex,
+                                level: currentLevel
+                            });
+                            currentLevel++;
+                            log(`  Found multi-line brace starting at line ${lineIndex + 1}, closing at line ${closingLine + 1}, level ${currentLevel}`);
+                        } else {
+                            log(`  No closing brace found for line ${lineIndex + 1}`);
+                        }
+                    }
+                }
+                pos++;
+            } else if (char === '}') {
+                // スタックから対応する中括弧を探す
+                for (let i = stack.length - 1; i >= 0; i--) {
+                    if (stack[i].type === 'brace') {
+                        structures.push({
+                            type: 'brace',
+                            startLine: stack[i].startLine,
+                            endLine: lineIndex,
+                            level: stack[i].level + 1
+                        });
+                        stack.splice(i, 1);
+                        currentLevel = Math.max(0, currentLevel - 1);
+                        log(`  Found closing brace at line ${lineIndex + 1}, level ${currentLevel}`);
+                        break;
+                    }
+                }
+                pos++;
+            } else {
+                pos++;
+            }
+        }
+    }
+    
+    // 2. 構造に基づいてネストレベルを設定
+    for (const structure of structures) {
+        for (let lineIndex = structure.startLine + 1; lineIndex < structure.endLine; lineIndex++) {
+            const line = lines[lineIndex].trim();
+            if (line && !line.startsWith('%')) {
+                nestLevels[lineIndex] = Math.max(nestLevels[lineIndex], structure.level);
+            }
+        }
+    }
+    
+    log('=== DEBUG: Unified nest levels ===');
+    nestLevels.forEach((level, i) => {
+        if (level > 0) {
+            log(`  Line ${i + 1}: nest level ${level} - "${lines[i].trim()}"`);
+        }
+    });
+    
+    return nestLevels;
+}
+
 function formatBraces(lines: string[], config: FormatConfig): string[] {
     const result = [...lines];
     
@@ -197,29 +396,8 @@ function formatBraces(lines: string[], config: FormatConfig): string[] {
     // ネストレベルを計算するために中括弧ペアを開始行でソート
     braceInfos.sort((a, b) => a.openLine - b.openLine);
     
-    // 各行のネストレベルを計算
-    const lineNestLevels = new Array(result.length).fill(0);
-    
-    for (const braceInfo of braceInfos) {
-        const {openLine, closeLine, openPos, closePos} = braceInfo;
-        
-        // 開き括弧の行をチェック - 括弧で終わっているか（バックスラッシュも考慮）
-        const openLineText = result[openLine];
-        const afterBrace = openLineText.substring(openPos + 1).trim();
-        const isOpenLineEndsWithBrace = afterBrace === '' || afterBrace === '\\';
-        
-        // 閉じ括弧の行をチェック - 括弧で始まっているか
-        const closeLineText = result[closeLine];
-        const beforeBrace = closeLineText.substring(0, closePos).trim();
-        const isCloseLineStartsWithBrace = beforeBrace === '';
-        
-        // 両方の条件を満たす場合のみネストレベルを増加
-        if (isOpenLineEndsWithBrace && isCloseLineStartsWithBrace) {
-            for (let i = openLine + 1; i < closeLine; i++) {
-                lineNestLevels[i]++;
-            }
-        }
-    }
+    // 統一されたネストレベル計算（中括弧 + begin/end環境）
+    const lineNestLevels = calculateUnifiedNestLevels(result);
     
     // ネストレベルに基づいてインデントを適用
     for (const braceInfo of braceInfos.reverse()) {
@@ -247,8 +425,14 @@ function formatBraces(lines: string[], config: FormatConfig): string[] {
                 if (trimmed !== '') {
                     const nestLevel = lineNestLevels[i];
                     const innerIndent = createIndent(nestLevel, config);
+                    const oldLine = result[i];
                     result[i] = innerIndent + trimmed;
-                    log(`  formatBraces: Line ${i + 1} (nest ${nestLevel}) -> "${result[i]}"`);
+                    log(`  formatBraces: Line ${i + 1} (nest ${nestLevel})`);
+                    log(`    BEFORE: "${oldLine}"`);
+                    log(`    TRIMMED: "${trimmed}"`);
+                    log(`    INDENT: "${innerIndent}" (length ${innerIndent.length})`);
+                    log(`    AFTER: "${result[i]}"`);
+                    log(`    ARRAY CHECK: result[${i}] = "${result[i]}"`);
                 } else {
                     result[i] = '';
                 }
@@ -841,13 +1025,31 @@ async function formatLaTeXDocument(): Promise<void> {
         log('=== DEBUG: Final result (first 15 lines) ===');
         lines.slice(0, 15).forEach((line, i) => log(`  ${i + 1}: "${line}"`));
         
+        // Save the result to a debug file for inspection using VS Code API
+        try {
+            const debugPath = vscode.Uri.file('/Users/keppy/dev/latex-align-indent/test/debug_vscode_output.tex');
+            await vscode.workspace.fs.writeFile(debugPath, Buffer.from(newContent, 'utf8'));
+            log(`Debug: Formatted content saved to ${debugPath.fsPath}`);
+        } catch (error) {
+            log(`Debug: Failed to save debug file: ${error}`);
+        }
+        
         // ドキュメント全体を置換
+        log('=== DEBUG: About to replace editor content ===');
+        log(`Original text length: ${text.length}`);
+        log(`New content length: ${newContent.length}`);
+        log('New content (first 15 lines):');
+        newContent.split('\n').slice(0, 15).forEach((line: string, i: number) => 
+            log(`  REPLACE ${i + 1}: "${line}"`)
+        );
+        
         await editor.edit((editBuilder: vscode.TextEditorEdit) => {
             const fullRange = new vscode.Range(
                 document.positionAt(0),
                 document.positionAt(text.length)
             );
             editBuilder.replace(fullRange, newContent);
+            log('=== DEBUG: editBuilder.replace called ===');
         });
 
         // カーソル位置とスクロール位置を復元
@@ -875,6 +1077,11 @@ async function formatLaTeXDocumentSync(document: vscode.TextDocument): Promise<v
         const text = document.getText();
         let lines = text.split('\n');
         
+        log('=== DEBUG: formatLaTeXDocumentSync started ===');
+        log(`config.formatBraces: ${config.formatBraces}`);
+        log(`Original lines (first 10):`);
+        lines.slice(0, 10).forEach((line: string, i: number) => log(`  SYNC ${i + 1}: "${line}"`));
+        
         // フォーマット処理を実行
         if (config.trimTrailingWhitespace) {
             lines = trimTrailingWhitespace(lines);
@@ -889,7 +1096,10 @@ async function formatLaTeXDocumentSync(document: vscode.TextDocument): Promise<v
         }
         
         if (config.formatBraces) {
+            log('=== DEBUG: SYNC calling formatBraces ===');
             lines = formatBraces(lines, config);
+            log('After SYNC formatBraces (first 15 lines):');
+            lines.slice(0, 15).forEach((line: string, i: number) => log(`  SYNC-AFTER ${i + 1}: "${line}"`));
         }
         
         if (config.alignEnvironments) {
@@ -910,12 +1120,24 @@ async function formatLaTeXDocumentSync(document: vscode.TextDocument): Promise<v
             }
         }
         
-        if (config.indentEnvironments) {
+        log('=== DEBUG: SYNC checking environment indentation ===');
+        log(`config.indentEnvironments: ${config.indentEnvironments}`);
+        log(`config.formatBraces: ${config.formatBraces}`);
+        log(`Should run formatEnvironmentIndentation: ${config.indentEnvironments && !config.formatBraces}`);
+        log(`Should run applyBasicIndentation: ${config.indentEnvironments && !config.formatBraces}`);
+        
+        if (config.indentEnvironments && !config.formatBraces) {
+            log('SYNC: Calling formatEnvironmentIndentation...');
             lines = formatEnvironmentIndentation(lines, config);
+        } else {
+            log('SYNC: Skipping formatEnvironmentIndentation');
         }
         
-        if (config.indentEnvironments) {
+        if (config.indentEnvironments && !config.formatBraces) {
+            log('SYNC: Calling applyBasicIndentation...');
             lines = applyBasicIndentation(lines, config);
+        } else {
+            log('SYNC: Skipping applyBasicIndentation');
         }
         
         if (config.maxLineLength > 0) {
@@ -924,12 +1146,25 @@ async function formatLaTeXDocumentSync(document: vscode.TextDocument): Promise<v
         
         const newContent = lines.join('\n');
         
+        log('=== DEBUG: SYNC Final result (first 15 lines) ===');
+        lines.slice(0, 15).forEach((line: string, i: number) => log(`  SYNC-FINAL ${i + 1}: "${line}"`));
+        
+        // Save debug file using VS Code API
+        try {
+            const debugPath = vscode.Uri.file('/Users/keppy/dev/latex-align-indent/test/debug_sync_output.tex');
+            await vscode.workspace.fs.writeFile(debugPath, Buffer.from(newContent, 'utf8'));
+            log(`Debug SYNC: Formatted content saved to ${debugPath.fsPath}`);
+        } catch (error) {
+            log(`Debug SYNC: Failed to save debug file: ${error}`);
+        }
+        
         // TextEditとして返す
         const fullRange = new vscode.Range(
             document.positionAt(0),
             document.positionAt(text.length)
         );
         
+        log(`=== DEBUG: SYNC returning TextEdit with ${newContent.length} chars ===`);
         return [vscode.TextEdit.replace(fullRange, newContent)];
         
     } catch (error) {
@@ -1026,12 +1261,23 @@ class LaTeXFormattingProvider implements vscode.DocumentFormattingEditProvider, 
  */
 function setupAutoFormat(context: vscode.ExtensionContext): void {
     const saveDisposable = vscode.workspace.onWillSaveTextDocument((event: vscode.TextDocumentWillSaveEvent) => {
+        log(`=== SAVE EVENT: Document ${event.document.fileName} ===`);
+        log(`Language ID: ${event.document.languageId}`);
+        
         if (event.document.languageId === 'latex') {
             const config = vscode.workspace.getConfiguration('latex-align-indent');
-            if (config.get<boolean>('formatOnSave', false)) {
+            const formatOnSave = config.get<boolean>('formatOnSave', false);
+            log(`formatOnSave setting: ${formatOnSave}`);
+            
+            if (formatOnSave) {
+                log('=== SAVE: Calling formatLaTeXDocumentSync ===');
                 // 保存前に同期的にフォーマットを実行
                 event.waitUntil(formatLaTeXDocumentSync(event.document));
+            } else {
+                log('SAVE: Skipping format - formatOnSave is disabled');
             }
+        } else {
+            log(`SAVE: Skipping format - not a LaTeX document (${event.document.languageId})`);
         }
     });
     context.subscriptions.push(saveDisposable);

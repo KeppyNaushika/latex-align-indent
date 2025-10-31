@@ -7,7 +7,7 @@
   % Problem case 1: foreach loop
   \foreach \x in {-15,-14,...,15} {
   \draw[dash pattern=on 0 off .25mm, line cap=round] (\x,-15.25) -- (\x,15.25);
-  }\
+}
 
   % Problem case 2: Complex newcommand
   \newcommand{\drawInCoordinatePlane}[7]{
@@ -21,8 +21,8 @@
 
   % clippingして関数を描画
   \begin{scope}
-    \clip (#2,#4) rectangle (#3,#5);
-    \draw[thick, domain=#2:#3] plot (\x, {#1});
+  \clip (#2,#4) rectangle (#3,#5);
+  \draw[thick, domain=#2:#3] plot (\x, {#1});
   \end{scope}
 
   % x=#3での関数値を直接計算
@@ -56,6 +56,6 @@
 
   \node[#6] at (\xintersect,\ytarget) {#7};
   \fi
-  }\
+}\
 
 \end{document}

@@ -7,7 +7,7 @@
   % Problem case 1: foreach loop - unindented
   \foreach \x in {-15,-14,...,15} {
   \draw[dash pattern=on 0 off .25mm, line cap=round] (\x,-15.25) -- (\x,15.25);
-  }\
+}\
 
   % Problem case 2: Complex newcommand - unindented
   \newcommand{\drawInCoordinatePlane}[7]{
@@ -56,6 +56,6 @@
 
   \node[#6] at (\xintersect,\ytarget) {#7};
   \fi
-  }\
+}\
 
 \end{document}
