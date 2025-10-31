@@ -142,6 +142,7 @@
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
+    "build": "npx vsce@latest package",
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile && npm run lint",
     "lint": "eslint src --ext ts",
@@ -149,9 +150,9 @@
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",
-    "@types/node": "18.x",
-    "@types/vscode": "^1.60.0",
-    "mocha": "^10.2.0",
-    "typescript": "^5.9.2"
+    "@types/node": "24.x",
+    "@types/vscode": "^1.105.0",
+    "mocha": "^11.7.4",
+    "typescript": "^5.9.3"
   }
 }
