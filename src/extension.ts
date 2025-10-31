@@ -42,6 +42,7 @@ interface FormatConfig {
     trimTrailingWhitespace: boolean;
     formatBraces: boolean;
     breakBeforeEnvironments: boolean;
+    skipTikz: boolean;
 }
 
 /**
@@ -74,18 +75,31 @@ function createIndent(level: number, config: FormatConfig): string {
 /**
  * 行末の空白を削除
  */
-function trimTrailingWhitespace(lines: string[]): string[] {
-    return lines.map(line => line.replace(/\s+$/, ''));
+function trimTrailingWhitespace(lines: string[], skipLines?: Set<number>): string[] {
+    return lines.map((line, index) => {
+        if (skipLines?.has(index)) {
+            return line;
+        }
+        return line.replace(/\s+$/, '');
+    });
 }
 
 /**
  * 連続する空行を制限
  */
-function limitConsecutiveBlankLines(lines: string[], maxBlankLines: number): string[] {
+function limitConsecutiveBlankLines(lines: string[], maxBlankLines: number, skipLines?: Set<number>): string[] {
     const result: string[] = [];
     let consecutiveBlankLines = 0;
     
-    for (const line of lines) {
+    for (let index = 0; index < lines.length; index++) {
+        const line = lines[index];
+
+        if (skipLines?.has(index)) {
+            result.push(line);
+            consecutiveBlankLines = 0;
+            continue;
+        }
+
         if (line.trim() === '') {
             consecutiveBlankLines++;
             if (consecutiveBlankLines <= maxBlankLines) {
@@ -111,12 +125,16 @@ interface BraceInfo {
 /**
  * 中括弧のペアを検出
  */
-function findBracePairs(lines: string[]): BraceInfo[] {
+function findBracePairs(lines: string[], skipLines?: Set<number>): BraceInfo[] {
     const braceInfos: BraceInfo[] = [];
     const braceStack: Array<{line: number, pos: number, indent: string}> = [];
     
     for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
         const line = lines[lineIndex];
+
+        if (skipLines?.has(lineIndex)) {
+            continue;
+        }
         
         // コメント行はスキップ
         if (line.trim().startsWith('%')) {
@@ -174,7 +192,7 @@ function findBracePairs(lines: string[]): BraceInfo[] {
 /**
  * 統一されたネストレベル計算（中括弧 + begin/end環境）
  */
-function calculateUnifiedNestLevels(lines: string[]): number[] {
+function calculateUnifiedNestLevels(lines: string[], skipLines?: Set<number>): number[] {
     const nestLevels = new Array(lines.length).fill(0);
     
     // 文書構造の環境（インデントしない）
@@ -196,6 +214,10 @@ function calculateUnifiedNestLevels(lines: string[]): number[] {
     
     for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
         const line = lines[lineIndex];
+
+        if (skipLines?.has(lineIndex)) {
+            continue;
+        }
         const trimmed = line.trim();
         
         // コメント行はスキップ
@@ -353,6 +375,10 @@ function calculateUnifiedNestLevels(lines: string[]): number[] {
     // 2. 構造に基づいてネストレベルを設定
     for (const structure of structures) {
         for (let lineIndex = structure.startLine + 1; lineIndex < structure.endLine; lineIndex++) {
+            if (skipLines?.has(lineIndex)) {
+                continue;
+            }
+
             const line = lines[lineIndex].trim();
             if (line && !line.startsWith('%')) {
                 nestLevels[lineIndex] = Math.max(nestLevels[lineIndex], structure.level);
@@ -370,12 +396,16 @@ function calculateUnifiedNestLevels(lines: string[]): number[] {
     return nestLevels;
 }
 
-function formatBraces(lines: string[], config: FormatConfig): string[] {
+function formatBraces(lines: string[], config: FormatConfig, skipLines?: Set<number>): string[] {
     const result = [...lines];
     
     // 基本的な中括弧の前後スペース調整
     for (let i = 0; i < result.length; i++) {
         let line = result[i];
+
+        if (skipLines?.has(i)) {
+            continue;
+        }
         
         // コメント行はそのまま
         if (line.trim().startsWith('%')) {
@@ -391,17 +421,21 @@ function formatBraces(lines: string[], config: FormatConfig): string[] {
     }
     
     // 複数行中括弧のインデント処理
-    const braceInfos = findBracePairs(result);
+    const braceInfos = findBracePairs(result, skipLines);
     
     // ネストレベルを計算するために中括弧ペアを開始行でソート
     braceInfos.sort((a, b) => a.openLine - b.openLine);
     
     // 統一されたネストレベル計算（中括弧 + begin/end環境）
-    const lineNestLevels = calculateUnifiedNestLevels(result);
+    const lineNestLevels = calculateUnifiedNestLevels(result, skipLines);
     
     // ネストレベルに基づいてインデントを適用
     for (const braceInfo of braceInfos.reverse()) {
         const {openLine, closeLine, openPos, closePos, baseIndent} = braceInfo;
+
+        if (skipLines?.has(openLine) || skipLines?.has(closeLine)) {
+            continue;
+        }
         
         // 開き括弧の行をチェック - 括弧で終わっているか（バックスラッシュも考慮）
         const openLineText = result[openLine];
@@ -419,12 +453,15 @@ function formatBraces(lines: string[], config: FormatConfig): string[] {
             
             // 中括弧内の行をインデント
             for (let i = openLine + 1; i < closeLine; i++) {
+                if (skipLines?.has(i)) {
+                    continue;
+                }
                 const line = result[i];
                 const trimmed = line.trim();
                 
                 if (trimmed !== '') {
-                    const nestLevel = lineNestLevels[i];
-                    const innerIndent = createIndent(nestLevel, config);
+                    const nestLevel = Math.max(0, (lineNestLevels[i] || 0) - (lineNestLevels[openLine] || 0));
+                    const innerIndent = baseIndent + createIndent(nestLevel + 1, config);
                     const oldLine = result[i];
                     result[i] = innerIndent + trimmed;
                     log(`  formatBraces: Line ${i + 1} (nest ${nestLevel})`);
@@ -440,7 +477,7 @@ function formatBraces(lines: string[], config: FormatConfig): string[] {
             
             // 閉じ括弧を適切な位置に配置
             const closeBraceAfter = closeLineText.substring(closePos + 1);
-            result[closeLine] = '}' + closeBraceAfter;
+            result[closeLine] = baseIndent + '}' + closeBraceAfter;
         }
     }
     
@@ -644,18 +681,60 @@ function findEnvironments(document: vscode.TextDocument | {getText(): string}): 
     return {environments, mismatches};
 }
 
+function computeSkipLineSet(lines: string[], config: FormatConfig): Set<number> {
+    const skipLines = new Set<number>();
+
+    if (!config.skipTikz) {
+        return skipLines;
+    }
+
+    const tempDocument = {
+        getText: () => lines.join('\n')
+    };
+
+    const {environments} = findEnvironments(tempDocument);
+
+    for (const env of environments) {
+        const envType = env.type.toLowerCase();
+        if (!envType.includes('tikz') && !envType.includes('pgfplot')) {
+            continue;
+        }
+
+        const beginLine = env.beginLine ?? env.start;
+        const endLine = env.endLine ?? env.end;
+
+        for (let line = beginLine; line <= endLine; line++) {
+            skipLines.add(line);
+        }
+    }
+
+    return skipLines;
+}
+
 /**
  * \begin{}と\end{}の前で自動改行
  */
-function breakBeforeEnvironments(lines: string[], config: FormatConfig): string[] {
+function breakBeforeEnvironments(lines: string[], config: FormatConfig, skipLines?: Set<number>): string[] {
     if (!config.breakBeforeEnvironments) {
         return lines;
     }
     
     const result: string[] = [];
+    const isParameterOnly = (text: string): boolean => {
+        const trimmed = text.trim();
+        if (!trimmed) {
+            return false;
+        }
+        return /^((\[[^\]]*\]|\{[^}]*\})\s*)+$/.test(trimmed);
+    };
     
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
+        
+        if (skipLines?.has(i)) {
+            result.push(line);
+            continue;
+        }
         
         // コメント行はそのまま
         if (line.trim().startsWith('%')) {
@@ -685,7 +764,7 @@ function breakBeforeEnvironments(lines: string[], config: FormatConfig): string[
             
             // \begin{}の後にコンテンツがある場合は改行しない
             // 単に改行だけ追加
-            if (after.trim()) {
+            if (after.trim() && !isParameterOnly(after)) {
                 result.push(indent + `\\begin{${envType}}`);
                 currentLine = indent + createIndent(1, config) + after.trim();
                 hasChanges = true;
@@ -706,7 +785,7 @@ function breakBeforeEnvironments(lines: string[], config: FormatConfig): string[
             }
             
             // \end{}の後は改行しない
-            if (after.trim()) {
+            if (after.trim() && !isParameterOnly(after)) {
                 currentLine = indent + `\\end{${envType}}` + after;
                 hasChanges = true;
             }
@@ -725,7 +804,7 @@ function breakBeforeEnvironments(lines: string[], config: FormatConfig): string[
 /**
  * \begin{}\end{}環境のインデント処理
  */
-function formatEnvironmentIndentation(lines: string[], config: FormatConfig): string[] {
+function formatEnvironmentIndentation(lines: string[], config: FormatConfig, skipLines?: Set<number>): string[] {
     const result = [...lines];
     
     const tempDocument = {
@@ -737,6 +816,9 @@ function formatEnvironmentIndentation(lines: string[], config: FormatConfig): st
     // 後ろから処理して行番号のズレを防ぐ
     for (const env of environments.reverse()) {
         if (env.beginLine === undefined || env.endLine === undefined) continue;
+        if (skipLines?.has(env.beginLine) || skipLines?.has(env.endLine)) {
+            continue;
+        }
         
         const beginLine = result[env.beginLine];
         const endLine = result[env.endLine];
@@ -756,6 +838,9 @@ function formatEnvironmentIndentation(lines: string[], config: FormatConfig): st
             
             // 環境内の行をインデント
             for (let i = env.beginLine + 1; i < env.endLine; i++) {
+                if (skipLines?.has(i)) {
+                    continue;
+                }
                 const line = result[i];
                 const trimmed = line.trim();
                 
@@ -771,6 +856,9 @@ function formatEnvironmentIndentation(lines: string[], config: FormatConfig): st
             }
             
             // \end{}を適切な位置に配置
+            if (skipLines?.has(env.endLine)) {
+                continue;
+            }
             result[env.endLine] = baseIndent + endLine.trim();
         }
     }
@@ -781,7 +869,7 @@ function formatEnvironmentIndentation(lines: string[], config: FormatConfig): st
 /**
  * 基本的なLaTeXインデント処理
  */
-function applyBasicIndentation(lines: string[], config: FormatConfig): string[] {
+function applyBasicIndentation(lines: string[], config: FormatConfig, skipLines?: Set<number>): string[] {
     const result: string[] = [];
     let indentLevel = 0;
     
@@ -795,14 +883,16 @@ function applyBasicIndentation(lines: string[], config: FormatConfig): string[] 
         // 空行の処理
         if (!trimmed) {
             if (config.preserveBlankLines) {
-                result.push('');
+                result.push(skipLines?.has(i) ? line : '');
             }
             continue;
         }
         
         // コメント行はインデントのみ適用
         if (trimmed.startsWith('%')) {
-            if (indentLevel > 0) {
+            if (skipLines?.has(i)) {
+                result.push(line);
+            } else if (indentLevel > 0) {
                 result.push(createIndent(indentLevel, config) + trimmed);
             } else {
                 result.push(line);
@@ -819,8 +909,12 @@ function applyBasicIndentation(lines: string[], config: FormatConfig): string[] 
         }
         
         // インデントを適用
-        const indentedLine = createIndent(currentIndent, config) + trimmed;
-        result.push(indentedLine);
+        if (skipLines?.has(i)) {
+            result.push(line);
+        } else {
+            const indentedLine = createIndent(currentIndent, config) + trimmed;
+            result.push(indentedLine);
+        }
         
         // \begin{}の場合、次行からインデントを増やす
         if (beginPattern.test(trimmed)) {
@@ -834,12 +928,19 @@ function applyBasicIndentation(lines: string[], config: FormatConfig): string[] 
 /**
  * 長い行の折り返し処理
  */
-function wrapLongLines(lines: string[], maxLength: number): string[] {
+function wrapLongLines(lines: string[], maxLength: number, skipLines?: Set<number>): string[] {
     if (maxLength <= 0) return lines;
     
     const result: string[] = [];
     
-    for (const line of lines) {
+    for (let index = 0; index < lines.length; index++) {
+        const line = lines[index];
+
+        if (skipLines?.has(index)) {
+            result.push(line);
+            continue;
+        }
+
         if (line.length <= maxLength || line.trim().startsWith('%')) {
             result.push(line);
             continue;
@@ -887,22 +988,26 @@ function wrapLongLines(lines: string[], maxLength: number): string[] {
 /**
  * 設定を取得
  */
-function getFormatConfig(): FormatConfig {
+function getFormatConfig(options?: Partial<vscode.FormattingOptions>): FormatConfig {
     const config = vscode.workspace.getConfiguration('latex-align-indent');
     const editorConfig = vscode.workspace.getConfiguration('editor');
     const latexConfig = vscode.workspace.getConfiguration('[latex]');
     
     const latexTabSize = latexConfig.get<number>('editor.tabSize');
     const defaultTabSize = editorConfig.get<number>('tabSize', 4);
+    const resolvedTabSize = typeof options?.tabSize === 'number' ? options.tabSize : (latexTabSize || defaultTabSize);
+    const resolvedInsertSpaces = options?.insertSpaces ?? editorConfig.get<boolean>('insertSpaces', true);
     
     log('DEBUG: getFormatConfig');
+    log(`  formatting options tabSize: ${options?.tabSize}`);
+    log(`  formatting options insertSpaces: ${options?.insertSpaces}`);
     log(`  latexTabSize: ${latexTabSize}`);
     log(`  defaultTabSize: ${defaultTabSize}`);
-    log(`  final tabSize: ${latexTabSize || defaultTabSize}`);
+    log(`  final tabSize: ${resolvedTabSize}`);
     
     return {
-        useSpaces: editorConfig.get<boolean>('insertSpaces', true),
-        tabSize: latexTabSize || defaultTabSize,
+        useSpaces: resolvedInsertSpaces,
+        tabSize: resolvedTabSize,
         alignEnvironments: config.get<boolean>('alignEnvironments', true),
         indentEnvironments: config.get<boolean>('indentEnvironments', true),
         indentInsideEnvironments: config.get<boolean>('indentInsideEnvironments', true),
@@ -911,7 +1016,8 @@ function getFormatConfig(): FormatConfig {
         maxConsecutiveBlankLines: config.get<number>('maxConsecutiveBlankLines', 1),
         trimTrailingWhitespace: config.get<boolean>('trimTrailingWhitespace', true),
         formatBraces: config.get<boolean>('formatBraces', true),
-        breakBeforeEnvironments: config.get<boolean>('breakBeforeEnvironments', false)
+        breakBeforeEnvironments: config.get<boolean>('breakBeforeEnvironments', false),
+        skipTikz: config.get<boolean>('skipTikz', false)
     };
 }
 
@@ -931,7 +1037,16 @@ async function formatLaTeXDocument(): Promise<void> {
         return;
     }
 
-    const config = getFormatConfig();
+    const editorOptions = editor.options;
+    const formattingOptions: Partial<vscode.FormattingOptions> = {};
+    if (typeof editorOptions.tabSize === 'number') {
+        formattingOptions.tabSize = editorOptions.tabSize;
+    }
+    if (typeof editorOptions.insertSpaces === 'boolean') {
+        formattingOptions.insertSpaces = editorOptions.insertSpaces;
+    }
+
+    const config = getFormatConfig(formattingOptions);
     const originalSelections = [...editor.selections];
     const visibleRanges = [...editor.visibleRanges];
 
@@ -947,19 +1062,27 @@ async function formatLaTeXDocument(): Promise<void> {
         log('Original lines (first 10):');
         lines.slice(0, 10).forEach((line, i) => log(`  ${i + 1}: "${line}"`));
         
+        let skipLines = config.skipTikz ? computeSkipLineSet(lines, config) : undefined;
+        const refreshSkipLines = () => {
+            skipLines = config.skipTikz ? computeSkipLineSet(lines, config) : undefined;
+        };
+
         // 1. 行末空白の削除
         if (config.trimTrailingWhitespace) {
-            lines = trimTrailingWhitespace(lines);
+            lines = trimTrailingWhitespace(lines, skipLines);
+            refreshSkipLines();
         }
         
         // 2. 連続する空行の制限
         if (config.maxConsecutiveBlankLines >= 0) {
-            lines = limitConsecutiveBlankLines(lines, config.maxConsecutiveBlankLines);
+            lines = limitConsecutiveBlankLines(lines, config.maxConsecutiveBlankLines, skipLines);
+            refreshSkipLines();
         }
         
         // 3. 環境の自動改行
         if (config.breakBeforeEnvironments) {
-            lines = breakBeforeEnvironments(lines, config);
+            lines = breakBeforeEnvironments(lines, config, skipLines);
+            refreshSkipLines();
         }
         
         // 4. 中括弧のフォーマット
@@ -967,9 +1090,10 @@ async function formatLaTeXDocument(): Promise<void> {
         log(`config.formatBraces: ${config.formatBraces}`);
         if (config.formatBraces) {
             log('Calling formatBraces...');
-            lines = formatBraces(lines, config);
+            lines = formatBraces(lines, config, skipLines);
             log('After formatBraces (first 15 lines):');
             lines.slice(0, 15).forEach((line, i) => log(`  ${i + 1}: "${line}"`));
+            refreshSkipLines();
         } else {
             log('Skipping formatBraces');
         }
@@ -991,6 +1115,8 @@ async function formatLaTeXDocument(): Promise<void> {
                     lines.splice(env.start, env.end - env.start + 1, ...alignedContent);
                 }
             }
+
+            refreshSkipLines();
         }
         
         // 6. 環境のインデント処理 (formatBracesが有効な場合はスキップ)
@@ -1000,7 +1126,8 @@ async function formatLaTeXDocument(): Promise<void> {
         log(`Should run formatEnvironmentIndentation: ${config.indentEnvironments && !config.formatBraces}`);
         if (config.indentEnvironments && !config.formatBraces) {
             log('Calling formatEnvironmentIndentation...');
-            lines = formatEnvironmentIndentation(lines, config);
+            lines = formatEnvironmentIndentation(lines, config, skipLines);
+            refreshSkipLines();
         } else {
             log('Skipping formatEnvironmentIndentation');
         }
@@ -1010,14 +1137,16 @@ async function formatLaTeXDocument(): Promise<void> {
         log(`Should run applyBasicIndentation: ${config.indentEnvironments && !config.formatBraces}`);
         if (config.indentEnvironments && !config.formatBraces) {
             log('Calling applyBasicIndentation...');
-            lines = applyBasicIndentation(lines, config);
+            lines = applyBasicIndentation(lines, config, skipLines);
+            refreshSkipLines();
         } else {
             log('Skipping applyBasicIndentation');
         }
         
         // 8. 長い行の折り返し
         if (config.maxLineLength > 0) {
-            lines = wrapLongLines(lines, config.maxLineLength);
+            lines = wrapLongLines(lines, config.maxLineLength, skipLines);
+            refreshSkipLines();
         }
         
         const newContent = lines.join('\n');
@@ -1043,14 +1172,18 @@ async function formatLaTeXDocument(): Promise<void> {
             log(`  REPLACE ${i + 1}: "${line}"`)
         );
         
-        await editor.edit((editBuilder: vscode.TextEditorEdit) => {
+        if (newContent !== text) {
             const fullRange = new vscode.Range(
                 document.positionAt(0),
                 document.positionAt(text.length)
             );
-            editBuilder.replace(fullRange, newContent);
-            log('=== DEBUG: editBuilder.replace called ===');
-        });
+            const workspaceEdit = new vscode.WorkspaceEdit();
+            workspaceEdit.replace(document.uri, fullRange, newContent);
+            const applied = await vscode.workspace.applyEdit(workspaceEdit);
+            log(`=== DEBUG: workspace.applyEdit called (success: ${applied}) ===`);
+        } else {
+            log('=== DEBUG: No changes detected, skipping edit ===');
+        }
 
         // カーソル位置とスクロール位置を復元
         editor.selections = originalSelections;
@@ -1070,8 +1203,8 @@ async function formatLaTeXDocument(): Promise<void> {
 /**
  * 同期的なフォーマット（保存前処理用）
  */
-async function formatLaTeXDocumentSync(document: vscode.TextDocument): Promise<vscode.TextEdit[]> {
-    const config = getFormatConfig();
+async function formatLaTeXDocumentSync(document: vscode.TextDocument, options?: Partial<vscode.FormattingOptions>): Promise<vscode.TextEdit[]> {
+    const config = getFormatConfig(options);
     
     try {
         const text = document.getText();
@@ -1083,23 +1216,32 @@ async function formatLaTeXDocumentSync(document: vscode.TextDocument): Promise<v
         lines.slice(0, 10).forEach((line: string, i: number) => log(`  SYNC ${i + 1}: "${line}"`));
         
         // フォーマット処理を実行
+        let skipLines = config.skipTikz ? computeSkipLineSet(lines, config) : undefined;
+        const refreshSkipLines = () => {
+            skipLines = config.skipTikz ? computeSkipLineSet(lines, config) : undefined;
+        };
+
         if (config.trimTrailingWhitespace) {
-            lines = trimTrailingWhitespace(lines);
+            lines = trimTrailingWhitespace(lines, skipLines);
+            refreshSkipLines();
         }
         
         if (config.maxConsecutiveBlankLines >= 0) {
-            lines = limitConsecutiveBlankLines(lines, config.maxConsecutiveBlankLines);
+            lines = limitConsecutiveBlankLines(lines, config.maxConsecutiveBlankLines, skipLines);
+            refreshSkipLines();
         }
         
         if (config.breakBeforeEnvironments) {
-            lines = breakBeforeEnvironments(lines, config);
+            lines = breakBeforeEnvironments(lines, config, skipLines);
+            refreshSkipLines();
         }
         
         if (config.formatBraces) {
             log('=== DEBUG: SYNC calling formatBraces ===');
-            lines = formatBraces(lines, config);
+            lines = formatBraces(lines, config, skipLines);
             log('After SYNC formatBraces (first 15 lines):');
             lines.slice(0, 15).forEach((line: string, i: number) => log(`  SYNC-AFTER ${i + 1}: "${line}"`));
+            refreshSkipLines();
         }
         
         if (config.alignEnvironments) {
@@ -1118,6 +1260,8 @@ async function formatLaTeXDocumentSync(document: vscode.TextDocument): Promise<v
                     lines.splice(env.start, env.end - env.start + 1, ...alignedContent);
                 }
             }
+
+            refreshSkipLines();
         }
         
         log('=== DEBUG: SYNC checking environment indentation ===');
@@ -1128,20 +1272,23 @@ async function formatLaTeXDocumentSync(document: vscode.TextDocument): Promise<v
         
         if (config.indentEnvironments && !config.formatBraces) {
             log('SYNC: Calling formatEnvironmentIndentation...');
-            lines = formatEnvironmentIndentation(lines, config);
+            lines = formatEnvironmentIndentation(lines, config, skipLines);
+            refreshSkipLines();
         } else {
             log('SYNC: Skipping formatEnvironmentIndentation');
         }
         
         if (config.indentEnvironments && !config.formatBraces) {
             log('SYNC: Calling applyBasicIndentation...');
-            lines = applyBasicIndentation(lines, config);
+            lines = applyBasicIndentation(lines, config, skipLines);
+            refreshSkipLines();
         } else {
             log('SYNC: Skipping applyBasicIndentation');
         }
         
         if (config.maxLineLength > 0) {
-            lines = wrapLongLines(lines, config.maxLineLength);
+            lines = wrapLongLines(lines, config.maxLineLength, skipLines);
+            refreshSkipLines();
         }
         
         const newContent = lines.join('\n');
@@ -1158,6 +1305,11 @@ async function formatLaTeXDocumentSync(document: vscode.TextDocument): Promise<v
             log(`Debug SYNC: Failed to save debug file: ${error}`);
         }
         
+        if (newContent === text) {
+            log('=== DEBUG: SYNC no changes detected, returning empty edits ===');
+            return [];
+        }
+
         // TextEditとして返す
         const fullRange = new vscode.Range(
             document.positionAt(0),
@@ -1235,7 +1387,7 @@ class LaTeXFormattingProvider implements vscode.DocumentFormattingEditProvider, 
         log(`Document language ID: ${document.languageId}`);
         
         try {
-            const edits = await formatLaTeXDocumentSync(document);
+            const edits = await formatLaTeXDocumentSync(document, options);
             log(`LaTeX Align Indent: Formatting completed, edits: ${edits.length}`);
             return edits;
         } catch (error) {
@@ -1271,8 +1423,32 @@ function setupAutoFormat(context: vscode.ExtensionContext): void {
             
             if (formatOnSave) {
                 log('=== SAVE: Calling formatLaTeXDocumentSync ===');
-                // 保存前に同期的にフォーマットを実行
-                event.waitUntil(formatLaTeXDocumentSync(event.document));
+                const visibleEditor = vscode.window.visibleTextEditors.find(
+                    editor => editor.document === event.document
+                );
+                const formattingOptions: Partial<vscode.FormattingOptions> = {};
+                if (visibleEditor) {
+                    if (typeof visibleEditor.options.tabSize === 'number') {
+                        formattingOptions.tabSize = visibleEditor.options.tabSize;
+                    }
+                    if (typeof visibleEditor.options.insertSpaces === 'boolean') {
+                        formattingOptions.insertSpaces = visibleEditor.options.insertSpaces;
+                    }
+                }
+
+                event.waitUntil((async () => {
+                    try {
+                        const edits = await formatLaTeXDocumentSync(event.document, formattingOptions);
+                        if (edits.length === 0) {
+                            return;
+                        }
+                        const workspaceEdit = new vscode.WorkspaceEdit();
+                        workspaceEdit.set(event.document.uri, edits);
+                        await vscode.workspace.applyEdit(workspaceEdit);
+                    } catch (error) {
+                        log(`SAVE: Formatting failed - ${error}`);
+                    }
+                })());
             } else {
                 log('SAVE: Skipping format - formatOnSave is disabled');
             }

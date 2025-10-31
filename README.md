@@ -11,6 +11,7 @@ LaTeX文書の包括的なフォーマット拡張機能です。表組み環境
 
 ### インデント処理
 - LaTeX環境内の自動インデント
+- VS Code の `tabSize` / `insertSpaces` 設定を尊重
 - `\begin{}`/`\end{}` のネストに対応したインデント
 - **`\foreach` ループの中括弧内インデント**
 - 基本的なLaTeXコマンドのインデント
@@ -59,6 +60,9 @@ LaTeX文書の包括的なフォーマット拡張機能です。表組み環境
 - `latex-align-indent.maxConsecutiveBlankLines`: 連続空行の最大数（デフォルト: 1）
 - `latex-align-indent.preserveBlankLines`: 空行の保持（デフォルト: true）
 - `latex-align-indent.maxLineLength`: 最大行長（0で無効、デフォルト: 0）
+
+### TikZ / PGFPlots
+- `latex-align-indent.skipTikz`: `tikzpicture` / `pgfplots` 系環境をフォーマットから除外（デフォルト: false）
 
 ## 対応環境
 

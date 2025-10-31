@@ -6,4 +6,8 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
-- Initial release
+- Respect VS Code の `tabSize` / `insertSpaces` 設定を使用してインデントを決定
+- `latex-align-indent.skipTikz` で `tikzpicture` / `pgfplots` 系環境のフォーマットをスキップ可能に
+- `\begin{...}[...]` のオプション引数を行分割せず保持
+- 中括弧ブロックのインデントを一般的なブロックスタイルに修正
+- 保存時フォーマットで VS Code の標準 `WorkspaceEdit` を利用し、副作用を軽減

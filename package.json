@@ -2,7 +2,7 @@
   "name": "latex-align-indent",
   "displayName": "LaTeX Align Indent",
   "description": "LaTeX Align Indent （全角文字対応）",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "publisher": "keppy",
   "license": "MIT",
   "repository": {
@@ -100,6 +100,11 @@
           "type": "boolean",
           "default": false,
           "description": "\\begin{}と\\end{}の前で自動改行を行う"
+        },
+        "latex-align-indent.skipTikz": {
+          "type": "boolean",
+          "default": false,
+          "description": "tikzpicture / pgfplots 系の環境をフォーマット対象から除外する"
         },
         "latex-align-indent.maxLineLength": {
           "type": "number",
