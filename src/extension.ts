@@ -166,6 +166,47 @@ function mergeBeginArguments(lines: string[], skipLines?: Set<number>): string[]
     return result;
 }
 
+function indentBracketBlocks(lines: string[], config: FormatConfig, skipLines?: Set<number>): string[] {
+    const result = [...lines];
+    const stack: Array<{baseIndent: string}> = [];
+
+    for (let i = 0; i < result.length; i++) {
+        if (skipLines?.has(i)) {
+            continue;
+        }
+
+        const line = result[i];
+        const indentMatch = line.match(/^(\s*)/);
+        const baseIndent = indentMatch ? indentMatch[1] : '';
+        const trimmed = line.trim();
+
+        if (!trimmed || trimmed.startsWith('%')) {
+            continue;
+        }
+
+        if (stack.length > 0) {
+            const current = stack[stack.length - 1];
+
+            if (trimmed.startsWith(']')) {
+                result[i] = current.baseIndent + trimmed;
+                stack.pop();
+                continue;
+            }
+
+            const innerIndent = current.baseIndent + createIndent(1, config);
+            result[i] = innerIndent + trimmed;
+            continue;
+        }
+
+        if (trimmed.endsWith('[') && line.indexOf(']') === -1) {
+            stack.push({baseIndent});
+            result[i] = baseIndent + trimmed;
+        }
+    }
+
+    return result;
+}
+
 interface BraceInfo {
     openLine: number;
     closeLine: number;
@@ -1150,6 +1191,8 @@ async function formatLaTeXDocument(): Promise<void> {
             refreshSkipLines();
             lines = mergeBeginArguments(lines, skipLines);
             refreshSkipLines();
+            lines = indentBracketBlocks(lines, config, skipLines);
+            refreshSkipLines();
         } else {
             log('Skipping formatBraces');
         }
@@ -1207,11 +1250,15 @@ async function formatLaTeXDocument(): Promise<void> {
             refreshSkipLines();
             lines = mergeBeginArguments(lines, skipLines);
             refreshSkipLines();
+            lines = indentBracketBlocks(lines, config, skipLines);
+            refreshSkipLines();
         }
 
         lines = fixOrphanClosingBraces(lines, skipLines);
         refreshSkipLines();
         lines = mergeBeginArguments(lines, skipLines);
+        refreshSkipLines();
+        lines = indentBracketBlocks(lines, config, skipLines);
         refreshSkipLines();
 
         const newContent = lines.join('\n');
@@ -1311,6 +1358,8 @@ async function formatLaTeXDocumentSync(document: vscode.TextDocument, options?: 
             refreshSkipLines();
             lines = mergeBeginArguments(lines, skipLines);
             refreshSkipLines();
+            lines = indentBracketBlocks(lines, config, skipLines);
+            refreshSkipLines();
         }
         
         if (config.alignEnvironments) {
@@ -1363,6 +1412,8 @@ async function formatLaTeXDocumentSync(document: vscode.TextDocument, options?: 
         lines = fixOrphanClosingBraces(lines, skipLines);
         refreshSkipLines();
         lines = mergeBeginArguments(lines, skipLines);
+        refreshSkipLines();
+        lines = indentBracketBlocks(lines, config, skipLines);
         refreshSkipLines();
 
         const newContent = lines.join('\n');
