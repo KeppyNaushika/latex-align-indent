@@ -137,6 +137,35 @@ function fixOrphanClosingBraces(lines: string[], skipLines?: Set<number>): strin
     return result;
 }
 
+function mergeBeginArguments(lines: string[], skipLines?: Set<number>): string[] {
+    const result: string[] = [];
+
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        if (skipLines?.has(i)) {
+            result.push(line);
+            continue;
+        }
+
+        const beginMatch = line.match(/^(\s*\\begin\{[^}]+\})\s*$/);
+        if (beginMatch && i + 1 < lines.length) {
+            const nextLine = lines[i + 1];
+            if (!skipLines?.has(i + 1)) {
+                const trimmedNext = nextLine.trim();
+                if (/^\{.*\}\s*$/.test(trimmedNext)) {
+                    result.push(`${beginMatch[1]}${trimmedNext}`);
+                    i++; // skip next line
+                    continue;
+                }
+            }
+        }
+
+        result.push(line);
+    }
+
+    return result;
+}
+
 interface BraceInfo {
     openLine: number;
     closeLine: number;
@@ -1119,6 +1148,8 @@ async function formatLaTeXDocument(): Promise<void> {
             refreshSkipLines();
             lines = fixOrphanClosingBraces(lines, skipLines);
             refreshSkipLines();
+            lines = mergeBeginArguments(lines, skipLines);
+            refreshSkipLines();
         } else {
             log('Skipping formatBraces');
         }
@@ -1174,9 +1205,13 @@ async function formatLaTeXDocument(): Promise<void> {
             refreshSkipLines();
             lines = fixOrphanClosingBraces(lines, skipLines);
             refreshSkipLines();
+            lines = mergeBeginArguments(lines, skipLines);
+            refreshSkipLines();
         }
 
         lines = fixOrphanClosingBraces(lines, skipLines);
+        refreshSkipLines();
+        lines = mergeBeginArguments(lines, skipLines);
         refreshSkipLines();
 
         const newContent = lines.join('\n');
@@ -1272,6 +1307,10 @@ async function formatLaTeXDocumentSync(document: vscode.TextDocument, options?: 
             log('After SYNC formatBraces (first 15 lines):');
             lines.slice(0, 15).forEach((line: string, i: number) => log(`  SYNC-AFTER ${i + 1}: "${line}"`));
             refreshSkipLines();
+            lines = fixOrphanClosingBraces(lines, skipLines);
+            refreshSkipLines();
+            lines = mergeBeginArguments(lines, skipLines);
+            refreshSkipLines();
         }
         
         if (config.alignEnvironments) {
@@ -1322,6 +1361,8 @@ async function formatLaTeXDocumentSync(document: vscode.TextDocument, options?: 
         }
 
         lines = fixOrphanClosingBraces(lines, skipLines);
+        refreshSkipLines();
+        lines = mergeBeginArguments(lines, skipLines);
         refreshSkipLines();
 
         const newContent = lines.join('\n');
