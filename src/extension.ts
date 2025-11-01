@@ -114,6 +114,29 @@ function limitConsecutiveBlankLines(lines: string[], maxBlankLines: number, skip
     return result;
 }
 
+function fixOrphanClosingBraces(lines: string[], skipLines?: Set<number>): string[] {
+    const result = [...lines];
+    let previousIndent = '';
+
+    for (let i = 0; i < result.length; i++) {
+        const line = result[i];
+        const indent = line.match(/^(\s*)/)?.[1] ?? '';
+        const trimmed = line.trim();
+
+        if (!skipLines?.has(i) && trimmed.startsWith('}') && indent.length === 0) {
+            if (previousIndent) {
+                result[i] = previousIndent + trimmed;
+            }
+        }
+
+        if (trimmed !== '') {
+            previousIndent = indent;
+        }
+    }
+
+    return result;
+}
+
 interface BraceInfo {
     openLine: number;
     closeLine: number;
@@ -1094,6 +1117,8 @@ async function formatLaTeXDocument(): Promise<void> {
             log('After formatBraces (first 15 lines):');
             lines.slice(0, 15).forEach((line, i) => log(`  ${i + 1}: "${line}"`));
             refreshSkipLines();
+            lines = fixOrphanClosingBraces(lines, skipLines);
+            refreshSkipLines();
         } else {
             log('Skipping formatBraces');
         }
@@ -1147,8 +1172,13 @@ async function formatLaTeXDocument(): Promise<void> {
         if (config.maxLineLength > 0) {
             lines = wrapLongLines(lines, config.maxLineLength, skipLines);
             refreshSkipLines();
+            lines = fixOrphanClosingBraces(lines, skipLines);
+            refreshSkipLines();
         }
-        
+
+        lines = fixOrphanClosingBraces(lines, skipLines);
+        refreshSkipLines();
+
         const newContent = lines.join('\n');
         
         log('=== DEBUG: Final result (first 15 lines) ===');
@@ -1290,7 +1320,10 @@ async function formatLaTeXDocumentSync(document: vscode.TextDocument, options?: 
             lines = wrapLongLines(lines, config.maxLineLength, skipLines);
             refreshSkipLines();
         }
-        
+
+        lines = fixOrphanClosingBraces(lines, skipLines);
+        refreshSkipLines();
+
         const newContent = lines.join('\n');
         
         log('=== DEBUG: SYNC Final result (first 15 lines) ===');
