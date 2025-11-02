@@ -141,25 +141,39 @@ function mergeBeginArguments(lines: string[], skipLines?: Set<number>): string[]
     const result: string[] = [];
 
     const isSimpleDelimitedArg = (text: string): boolean => {
-        if (text.length < 2) {
+        const trimmed = text.trim();
+        if (trimmed.length < 2) {
             return false;
         }
 
-        const pairs: Record<string, string> = {
-            '{': '}',
-            '[': ']',
-            '(': ')'
-        };
-
-        const open = text.charAt(0);
-        const close = text.charAt(text.length - 1);
-
-        if (pairs[open] !== close) {
+        const open = trimmed.charAt(0);
+        const close = trimmed.charAt(trimmed.length - 1);
+        if (delimiterPairs[open] !== close) {
             return false;
         }
 
-        const inner = text.slice(1, -1);
-        return !/[\{\}\[\]\(\)]/.test(inner);
+        const stack: string[] = [];
+        for (let i = 0; i < trimmed.length; i++) {
+            const char = trimmed[i];
+            if (char === '\\') {
+                i++;
+                continue;
+            }
+
+            if (delimiterPairs[char]) {
+                stack.push(char);
+            } else if (closingToOpening[char]) {
+                if (stack.length === 0 || stack[stack.length - 1] !== closingToOpening[char]) {
+                    return false;
+                }
+                stack.pop();
+                if (stack.length === 0 && i !== trimmed.length - 1) {
+                    return false;
+                }
+            }
+        }
+
+        return stack.length === 0;
     };
 
     for (let i = 0; i < lines.length; i++) {
@@ -700,7 +714,7 @@ function alignTabular(lines: string[], config: FormatConfig): string[] {
         }
         
         lineTypes.push('data');
-        const cells = line.split('&').map(cell => cell.replace(/\s+$/, ''));
+        const cells = trimmedLine.split('&').map(cell => cell.trim());
         const lengths = cells.map(cell => getDisplayWidth(cell));
         rows.push(cells);
 
@@ -733,7 +747,7 @@ function alignTabular(lines: string[], config: FormatConfig): string[] {
             }
             continue;
         }
-        
+
         if (lineType === 'data') {
             const cells = rows[i];
             const alignedCells: string[] = [];
@@ -746,7 +760,7 @@ function alignTabular(lines: string[], config: FormatConfig): string[] {
                 alignedCells.push(alignedCell);
             }
             
-            let alignedLine = alignedCells.join(' &');
+            let alignedLine = alignedCells.join(' & ');
             
             if (config.indentInsideEnvironments) {
                 alignedLine = createIndent(1, config) + alignedLine;
