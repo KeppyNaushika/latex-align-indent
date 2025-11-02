@@ -140,6 +140,28 @@ function fixOrphanClosingBraces(lines: string[], skipLines?: Set<number>): strin
 function mergeBeginArguments(lines: string[], skipLines?: Set<number>): string[] {
     const result: string[] = [];
 
+    const isSimpleDelimitedArg = (text: string): boolean => {
+        if (text.length < 2) {
+            return false;
+        }
+
+        const pairs: Record<string, string> = {
+            '{': '}',
+            '[': ']',
+            '(': ')'
+        };
+
+        const open = text.charAt(0);
+        const close = text.charAt(text.length - 1);
+
+        if (pairs[open] !== close) {
+            return false;
+        }
+
+        const inner = text.slice(1, -1);
+        return !/[\{\}\[\]\(\)]/.test(inner);
+    };
+
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
         if (skipLines?.has(i)) {
@@ -152,7 +174,7 @@ function mergeBeginArguments(lines: string[], skipLines?: Set<number>): string[]
             const nextLine = lines[i + 1];
             if (!skipLines?.has(i + 1)) {
                 const trimmedNext = nextLine.trim();
-                if (/^\{.*\}\s*$/.test(trimmedNext)) {
+                if (isSimpleDelimitedArg(trimmedNext)) {
                     result.push(`${beginMatch[1]}${trimmedNext}`);
                     i++; // skip next line
                     continue;
@@ -166,41 +188,111 @@ function mergeBeginArguments(lines: string[], skipLines?: Set<number>): string[]
     return result;
 }
 
-function indentBracketBlocks(lines: string[], config: FormatConfig, skipLines?: Set<number>): string[] {
+const delimiterPairs: Record<string, string> = {
+    '[': ']',
+    '{': '}',
+    '(': ')'
+};
+
+const closingToOpening: Record<string, string> = Object.entries(delimiterPairs).reduce((acc, [open, close]) => {
+    acc[close] = open;
+    return acc;
+}, {} as Record<string, string>);
+
+function collectUnmatchedOpenDelimiters(text: string): string[] {
+    const stack: string[] = [];
+    for (let i = 0; i < text.length; i++) {
+        const char = text[i];
+        if (char === '\\') {
+            i++;
+            continue;
+        }
+
+        if (delimiterPairs[char]) {
+            stack.push(char);
+            continue;
+        }
+
+        const expectedOpen = closingToOpening[char];
+        if (expectedOpen) {
+            for (let j = stack.length - 1; j >= 0; j--) {
+                if (stack[j] === expectedOpen) {
+                    stack.splice(j, 1);
+                    break;
+                }
+            }
+        }
+    }
+    return stack;
+}
+
+function indentDelimiterBlocks(lines: string[], config: FormatConfig, skipLines?: Set<number>): string[] {
     const result = [...lines];
-    const stack: Array<{baseIndent: string}> = [];
+    const stack: Array<{close: string, baseIndent: string, innerIndent: string}> = [];
 
     for (let i = 0; i < result.length; i++) {
         if (skipLines?.has(i)) {
             continue;
         }
 
-        const line = result[i];
-        const indentMatch = line.match(/^(\s*)/);
-        const baseIndent = indentMatch ? indentMatch[1] : '';
-        const trimmed = line.trim();
+        const originalLine = result[i];
+        let lineWithoutComment = originalLine;
+        let comment = '';
+        const commentIndex = originalLine.indexOf('%');
+        if (commentIndex !== -1) {
+            lineWithoutComment = originalLine.substring(0, commentIndex);
+            comment = originalLine.substring(commentIndex);
+        }
 
-        if (!trimmed || trimmed.startsWith('%')) {
+        const indentMatch = lineWithoutComment.match(/^(\s*)/);
+        const originalIndent = indentMatch ? indentMatch[1] : '';
+        const originalTrimmed = lineWithoutComment.trim();
+
+        if (!originalTrimmed) {
             continue;
         }
 
-        if (stack.length > 0) {
-            const current = stack[stack.length - 1];
+        let workingTrimmed = originalTrimmed;
+        let closingIndent: string | undefined;
 
-            if (trimmed.startsWith(']')) {
-                result[i] = current.baseIndent + trimmed;
-                stack.pop();
-                continue;
+        while (stack.length > 0 && workingTrimmed.startsWith(stack[stack.length - 1].close)) {
+            const top = stack.pop()!;
+            closingIndent = top.baseIndent;
+            workingTrimmed = workingTrimmed.slice(top.close.length).trimStart();
+        }
+
+        let currentIndent: string;
+        if (closingIndent !== undefined) {
+            currentIndent = closingIndent;
+        } else if (stack.length > 0) {
+            currentIndent = stack[stack.length - 1].innerIndent;
+        } else {
+            currentIndent = originalIndent;
+        }
+
+        const rebuiltLine = currentIndent + originalTrimmed + comment;
+        result[i] = rebuiltLine;
+
+        const candidate = (closingIndent !== undefined && workingTrimmed.length > 0) ? workingTrimmed : originalTrimmed;
+        const candidateTrimmed = candidate.replace(/\s+$/, '');
+        const unmatchedOpens = collectUnmatchedOpenDelimiters(candidateTrimmed);
+
+        if (unmatchedOpens.length > 0) {
+            const lineIndent = (rebuiltLine.match(/^(\s*)/)?.[1]) ?? currentIndent;
+            const baseIndent = lineIndent;
+            const innerIndent = baseIndent + createIndent(1, config);
+
+            for (const openChar of unmatchedOpens) {
+                const closeChar = delimiterPairs[openChar];
+                if (!closeChar) {
+                    continue;
+                }
+                stack.push({
+                    close: closeChar,
+                    baseIndent,
+                    innerIndent
+                });
             }
-
-            const innerIndent = current.baseIndent + createIndent(1, config);
-            result[i] = innerIndent + trimmed;
-            continue;
-        }
-
-        if (trimmed.endsWith('[') && line.indexOf(']') === -1) {
-            stack.push({baseIndent});
-            result[i] = baseIndent + trimmed;
         }
     }
 
@@ -1191,7 +1283,7 @@ async function formatLaTeXDocument(): Promise<void> {
             refreshSkipLines();
             lines = mergeBeginArguments(lines, skipLines);
             refreshSkipLines();
-            lines = indentBracketBlocks(lines, config, skipLines);
+            lines = indentDelimiterBlocks(lines, config, skipLines);
             refreshSkipLines();
         } else {
             log('Skipping formatBraces');
@@ -1250,7 +1342,7 @@ async function formatLaTeXDocument(): Promise<void> {
             refreshSkipLines();
             lines = mergeBeginArguments(lines, skipLines);
             refreshSkipLines();
-            lines = indentBracketBlocks(lines, config, skipLines);
+            lines = indentDelimiterBlocks(lines, config, skipLines);
             refreshSkipLines();
         }
 
@@ -1258,7 +1350,7 @@ async function formatLaTeXDocument(): Promise<void> {
         refreshSkipLines();
         lines = mergeBeginArguments(lines, skipLines);
         refreshSkipLines();
-        lines = indentBracketBlocks(lines, config, skipLines);
+        lines = indentDelimiterBlocks(lines, config, skipLines);
         refreshSkipLines();
 
         const newContent = lines.join('\n');
@@ -1358,7 +1450,7 @@ async function formatLaTeXDocumentSync(document: vscode.TextDocument, options?: 
             refreshSkipLines();
             lines = mergeBeginArguments(lines, skipLines);
             refreshSkipLines();
-            lines = indentBracketBlocks(lines, config, skipLines);
+            lines = indentDelimiterBlocks(lines, config, skipLines);
             refreshSkipLines();
         }
         
@@ -1413,7 +1505,7 @@ async function formatLaTeXDocumentSync(document: vscode.TextDocument, options?: 
         refreshSkipLines();
         lines = mergeBeginArguments(lines, skipLines);
         refreshSkipLines();
-        lines = indentBracketBlocks(lines, config, skipLines);
+        lines = indentDelimiterBlocks(lines, config, skipLines);
         refreshSkipLines();
 
         const newContent = lines.join('\n');
