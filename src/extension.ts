@@ -686,7 +686,7 @@ function formatBraces(lines: string[], config: FormatConfig, skipLines?: Set<num
 /**
  * 表組み環境の行を整列
  */
-function alignTabular(lines: string[], config: FormatConfig): string[] {
+function alignTabular(lines: string[], config: FormatConfig, baseIndent = ''): string[] {
     const maxLengths: number[] = [];
     const rows: string[][] = [];
     const lineTypes: string[] = [];
@@ -740,11 +740,13 @@ function alignTabular(lines: string[], config: FormatConfig): string[] {
         
         if (lineType === 'comment' || lineType === 'other') {
             const trimmed = lines[i].trim();
-            if (config.indentInsideEnvironments && trimmed) {
-                alignedLines.push(createIndent(1, config) + trimmed);
-            } else {
-                alignedLines.push(lines[i]);
+            if (!trimmed) {
+                alignedLines.push('');
+                continue;
             }
+
+            const commentIndent = config.indentInsideEnvironments ? baseIndent + createIndent(1, config) : baseIndent;
+            alignedLines.push(commentIndent + trimmed);
             continue;
         }
 
@@ -760,12 +762,8 @@ function alignTabular(lines: string[], config: FormatConfig): string[] {
                 alignedCells.push(alignedCell);
             }
             
-            let alignedLine = alignedCells.join(' & ');
-            
-            if (config.indentInsideEnvironments) {
-                alignedLine = createIndent(1, config) + alignedLine;
-            }
-            
+            const innerIndent = baseIndent + (config.indentInsideEnvironments ? createIndent(1, config) : '');
+            const alignedLine = innerIndent + alignedCells.join(' & ');
             alignedLines.push(alignedLine);
         }
     }
@@ -1316,7 +1314,7 @@ async function formatLaTeXDocument(): Promise<void> {
             
             for (const env of environments.reverse()) {
                 if (tableEnvTypes.includes(env.type)) {
-                    const alignedContent = alignTabular(env.content, config);
+                    const alignedContent = alignTabular(env.content, config, env.indent);
                     lines.splice(env.start, env.end - env.start + 1, ...alignedContent);
                 }
             }
@@ -1480,7 +1478,7 @@ async function formatLaTeXDocumentSync(document: vscode.TextDocument, options?: 
             
             for (const env of environments.reverse()) {
                 if (tableEnvTypes.includes(env.type)) {
-                    const alignedContent = alignTabular(env.content, config);
+                    const alignedContent = alignTabular(env.content, config, env.indent);
                     lines.splice(env.start, env.end - env.start + 1, ...alignedContent);
                 }
             }
