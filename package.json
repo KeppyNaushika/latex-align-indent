@@ -2,7 +2,7 @@
   "name": "latex-align-indent",
   "displayName": "LaTeX Align Indent",
   "description": "LaTeX Align Indent （全角文字対応）",
-  "version": "0.0.9",
+  "version": "0.0.10",
   "publisher": "keppy",
   "license": "MIT",
   "repository": {

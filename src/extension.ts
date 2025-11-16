@@ -140,62 +140,20 @@ function fixOrphanClosingBraces(lines: string[], skipLines?: Set<number>): strin
 function mergeBeginArguments(lines: string[], skipLines?: Set<number>): string[] {
     const result: string[] = [];
 
-    const isSimpleDelimitedArg = (text: string): boolean => {
-        const trimmed = text.trim();
-        if (trimmed.length < 2) {
-            return false;
-        }
-
-        const open = trimmed.charAt(0);
-        const close = trimmed.charAt(trimmed.length - 1);
-        if (delimiterPairs[open] !== close) {
-            return false;
-        }
-
-        const stack: string[] = [];
-        for (let i = 0; i < trimmed.length; i++) {
-            const char = trimmed[i];
-            if (char === '\\') {
-                i++;
-                continue;
-            }
-
-            if (delimiterPairs[char]) {
-                stack.push(char);
-            } else if (closingToOpening[char]) {
-                if (stack.length === 0 || stack[stack.length - 1] !== closingToOpening[char]) {
-                    return false;
-                }
-                stack.pop();
-                if (stack.length === 0 && i !== trimmed.length - 1) {
-                    return false;
-                }
-            }
-        }
-
-        return stack.length === 0;
-    };
-
     for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        if (skipLines?.has(i)) {
-            result.push(line);
-            continue;
-        }
-
-        const beginMatch = line.match(/^(\s*\\begin\{[^}]+\})\s*$/);
-        if (beginMatch && i + 1 < lines.length) {
-            const nextLine = lines[i + 1];
-            if (!skipLines?.has(i + 1)) {
-                const trimmedNext = nextLine.trim();
-                if (isSimpleDelimitedArg(trimmedNext)) {
-                    result.push(`${beginMatch[1]}${trimmedNext}`);
-                    i++; // skip next line
-                    continue;
+        let line = lines[i];
+        if (!skipLines?.has(i)) {
+            const beginMatch = line.match(/^(\s*\\begin\{[^}]+\})(.*)$/);
+            if (beginMatch) {
+                const head = beginMatch[1];
+                let tail = beginMatch[2];
+                if (tail) {
+                    tail = tail.replace(/^\s+(?=\{|\[|\\\[)/, '');
+                    tail = tail.replace(/([}\]])\s+(?=\{|\[|\\\[)/g, '$1');
+                    line = head + tail;
                 }
             }
         }
-
         result.push(line);
     }
 
@@ -208,6 +166,8 @@ const delimiterPairs: Record<string, string> = {
     '(': ')'
 };
 
+const nonIndentEnvironments = new Set(['document', 'abstract', 'article', 'book', 'report']);
+
 const closingToOpening: Record<string, string> = Object.entries(delimiterPairs).reduce((acc, [open, close]) => {
     acc[close] = open;
     return acc;
@@ -218,6 +178,25 @@ function collectUnmatchedOpenDelimiters(text: string): string[] {
     for (let i = 0; i < text.length; i++) {
         const char = text[i];
         if (char === '\\') {
+            const nextChar = text[i + 1];
+            if (nextChar === '[') {
+                stack.push('[');
+                i++;
+                continue;
+            }
+            if (nextChar === ']') {
+                const expectedOpen = closingToOpening[']'];
+                if (expectedOpen) {
+                    for (let j = stack.length - 1; j >= 0; j--) {
+                        if (stack[j] === expectedOpen) {
+                            stack.splice(j, 1);
+                            break;
+                        }
+                    }
+                }
+                i++;
+                continue;
+            }
             i++;
             continue;
         }
@@ -238,6 +217,16 @@ function collectUnmatchedOpenDelimiters(text: string): string[] {
         }
     }
     return stack;
+}
+
+function getClosingDelimiterLength(text: string, closeChar: string): number {
+    if (text.startsWith(closeChar)) {
+        return closeChar.length;
+    }
+    if (closeChar === ']' && text.startsWith('\\]')) {
+        return 2;
+    }
+    return 0;
 }
 
 function indentDelimiterBlocks(lines: string[], config: FormatConfig, skipLines?: Set<number>): string[] {
@@ -269,10 +258,15 @@ function indentDelimiterBlocks(lines: string[], config: FormatConfig, skipLines?
         let workingTrimmed = originalTrimmed;
         let closingIndent: string | undefined;
 
-        while (stack.length > 0 && workingTrimmed.startsWith(stack[stack.length - 1].close)) {
-            const top = stack.pop()!;
+        while (stack.length > 0) {
+            const top = stack[stack.length - 1];
+            const closeLength = getClosingDelimiterLength(workingTrimmed, top.close);
+            if (closeLength === 0) {
+                break;
+            }
+            stack.pop();
             closingIndent = top.baseIndent;
-            workingTrimmed = workingTrimmed.slice(top.close.length).trimStart();
+            workingTrimmed = workingTrimmed.slice(closeLength).trimStart();
         }
 
         let currentIndent: string;
@@ -391,207 +385,144 @@ function findBracePairs(lines: string[], skipLines?: Set<number>): BraceInfo[] {
 /**
  * 統一されたネストレベル計算（中括弧 + begin/end環境）
  */
+function removeCommentForStructure(line: string): string {
+    let result = '';
+    for (let i = 0; i < line.length; i++) {
+        const char = line[i];
+        if (char === '%' && (i === 0 || line[i - 1] !== '\\')) {
+            break;
+        }
+        result += char;
+    }
+    return result;
+}
+
+function matchStructureOpening(text: string, index: number): number {
+    const substring = text.substring(index);
+    const beginMatch = substring.match(/^\\begin\{([^}]+)\}/);
+    if (beginMatch) {
+        const envName = beginMatch[1];
+        if (!nonIndentEnvironments.has(envName)) {
+            return beginMatch[0].length;
+        }
+        return 0;
+    }
+
+    if (substring.startsWith('\\[')) {
+        return 2;
+    }
+
+    const char = text[index];
+    if (char === '{' || char === '[' || char === '(') {
+        return 1;
+    }
+
+    return 0;
+}
+
+function matchStructureClosing(text: string, index: number): number {
+    const substring = text.substring(index);
+    const endMatch = substring.match(/^\\end\{([^}]+)\}/);
+    if (endMatch) {
+        const envName = endMatch[1];
+        if (!nonIndentEnvironments.has(envName)) {
+            return endMatch[0].length;
+        }
+        return 0;
+    }
+
+    if (substring.startsWith('\\]')) {
+        return 2;
+    }
+
+    const char = text[index];
+    if (char === '}' || char === ']' || char === ')') {
+        return 1;
+    }
+
+    return 0;
+}
+
+function analyzeStructureLine(line: string): {leadingClosings: number, netDelta: number} {
+    const content = removeCommentForStructure(line);
+    let index = 0;
+    let leadingClosings = 0;
+    let netDelta = 0;
+    let encounteredContent = false;
+    
+    while (index < content.length) {
+        const char = content[index];
+        if (!encounteredContent && /\s/.test(char)) {
+            index++;
+            continue;
+        }
+
+        const closingLength = matchStructureClosing(content, index);
+        if (closingLength > 0) {
+            netDelta -= 1;
+            if (!encounteredContent) {
+                leadingClosings += 1;
+            }
+            encounteredContent = true;
+            index += closingLength;
+            continue;
+        }
+
+        const openingLength = matchStructureOpening(content, index);
+        if (openingLength > 0) {
+            netDelta += 1;
+            encounteredContent = true;
+            index += openingLength;
+            continue;
+        }
+
+        if (char === '\\') {
+            // エスケープした1文字を読み飛ばす
+            index += 2;
+        } else {
+            if (!/\s/.test(char)) {
+                encounteredContent = true;
+            }
+            index++;
+        }
+    }
+
+    return {leadingClosings, netDelta};
+}
+
 function calculateUnifiedNestLevels(lines: string[], skipLines?: Set<number>): number[] {
     const nestLevels = new Array(lines.length).fill(0);
-    
-    // 文書構造の環境（インデントしない）
-    const documentStructures = ['document', 'abstract', 'article', 'book', 'report'];
-    
-    // 構造の開始と終了位置を記録
-    interface StructureRange {
-        type: 'brace' | 'environment';
-        name?: string;
-        startLine: number;
-        endLine: number;
-        level: number;
-    }
-    const structures: StructureRange[] = [];
-    
-    // 1. 全ての構造を検出
     let currentLevel = 0;
-    const stack: Array<{type: 'brace' | 'environment', name?: string, startLine: number, level: number}> = [];
-    
+
     for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
         const line = lines[lineIndex];
+        const trimmed = line.trim();
 
         if (skipLines?.has(lineIndex)) {
+            nestLevels[lineIndex] = Math.max(0, currentLevel);
             continue;
         }
-        const trimmed = line.trim();
-        
-        // コメント行はスキップ
-        if (trimmed.startsWith('%')) {
-            continue;
-        }
-        
-        let pos = 0;
-        
-        while (pos < line.length) {
-            // \begin{} を検出
-            const beginMatch = line.substring(pos).match(/^\\begin\{([^}]+)\}/);
-            if (beginMatch) {
-                const envName = beginMatch[1];
-                if (!documentStructures.includes(envName)) {
-                    stack.push({
-                        type: 'environment',
-                        name: envName,
-                        startLine: lineIndex,
-                        level: currentLevel
-                    });
-                    currentLevel++;
-                    log(`  Found \\begin{${envName}} at line ${lineIndex + 1}, level ${currentLevel}`);
-                }
-                pos += beginMatch[0].length;
-                continue;
-            }
-            
-            // \end{} を検出
-            const endMatch = line.substring(pos).match(/^\\end\{([^}]+)\}/);
-            if (endMatch) {
-                const envName = endMatch[1];
-                if (!documentStructures.includes(envName)) {
-                    // スタックから対応する環境を探す
-                    for (let i = stack.length - 1; i >= 0; i--) {
-                        if (stack[i].type === 'environment' && stack[i].name === envName) {
-                            structures.push({
-                                type: 'environment',
-                                name: envName,
-                                startLine: stack[i].startLine,
-                                endLine: lineIndex,
-                                level: stack[i].level + 1
-                            });
-                            stack.splice(i, 1);
-                            currentLevel = Math.max(0, currentLevel - 1);
-                            log(`  Found \\end{${envName}} at line ${lineIndex + 1}, level ${currentLevel}`);
-                            break;
-                        }
-                    }
-                }
-                pos += endMatch[0].length;
-                continue;
-            }
-            
-            const char = line[pos];
-            
-            // エスケープ処理
-            if (char === '\\') {
-                pos += 2;
-                continue;
-            }
-            
-            // 中括弧処理
-            if (char === '{') {
-                const beforeBrace = line.substring(0, pos);
-                log(`  Line ${lineIndex + 1}, pos ${pos}: Found '{', beforeBrace: "${beforeBrace}"`);
-                const regexMatch = beforeBrace.match(/\\(foreach|pgffor|for|newcommand|renewcommand|def)(\s.*)?$/);
-                if (regexMatch) {
-                    log(`  Line ${lineIndex + 1}: Matched LaTeX command brace! Command: ${regexMatch[1]}`);
-                    // 同じ行に対応する閉じ括弧があるかチェック
-                    const remainingLine = line.substring(pos + 1);
-                    let braceCount = 1;
-                    let checkPos = 0;
-                    let foundClosingBrace = false;
-                    let closingLine = lineIndex;
-                    
-                    // まず同じ行で閉じ括弧を探す
-                    while (checkPos < remainingLine.length && braceCount > 0) {
-                        if (remainingLine[checkPos] === '\\') {
-                            checkPos += 2;
-                            continue;
-                        }
-                        if (remainingLine[checkPos] === '{') {
-                            braceCount++;
-                        } else if (remainingLine[checkPos] === '}') {
-                            braceCount--;
-                            if (braceCount === 0) {
-                                foundClosingBrace = true;
-                                break;
-                            }
-                        }
-                        checkPos++;
-                    }
-                    
-                    // 同じ行に閉じ括弧がない場合、後続の行で探す
-                    if (!foundClosingBrace) {
-                        for (let searchLine = lineIndex + 1; searchLine < lines.length; searchLine++) {
-                            const searchLineText = lines[searchLine];
-                            for (let searchPos = 0; searchPos < searchLineText.length; searchPos++) {
-                                if (searchLineText[searchPos] === '\\') {
-                                    searchPos++;
-                                    continue;
-                                }
-                                if (searchLineText[searchPos] === '{') {
-                                    braceCount++;
-                                } else if (searchLineText[searchPos] === '}') {
-                                    braceCount--;
-                                    if (braceCount === 0) {
-                                        foundClosingBrace = true;
-                                        closingLine = searchLine;
-                                        break;
-                                    }
-                                }
-                            }
-                            if (foundClosingBrace) break;
-                        }
-                        
-                        if (foundClosingBrace) {
-                            stack.push({
-                                type: 'brace',
-                                startLine: lineIndex,
-                                level: currentLevel
-                            });
-                            currentLevel++;
-                            log(`  Found multi-line brace starting at line ${lineIndex + 1}, closing at line ${closingLine + 1}, level ${currentLevel}`);
-                        } else {
-                            log(`  No closing brace found for line ${lineIndex + 1}`);
-                        }
-                    }
-                }
-                pos++;
-            } else if (char === '}') {
-                // スタックから対応する中括弧を探す
-                for (let i = stack.length - 1; i >= 0; i--) {
-                    if (stack[i].type === 'brace') {
-                        structures.push({
-                            type: 'brace',
-                            startLine: stack[i].startLine,
-                            endLine: lineIndex,
-                            level: stack[i].level + 1
-                        });
-                        stack.splice(i, 1);
-                        currentLevel = Math.max(0, currentLevel - 1);
-                        log(`  Found closing brace at line ${lineIndex + 1}, level ${currentLevel}`);
-                        break;
-                    }
-                }
-                pos++;
-            } else {
-                pos++;
-            }
-        }
-    }
-    
-    // 2. 構造に基づいてネストレベルを設定
-    for (const structure of structures) {
-        for (let lineIndex = structure.startLine + 1; lineIndex < structure.endLine; lineIndex++) {
-            if (skipLines?.has(lineIndex)) {
-                continue;
-            }
 
-            const line = lines[lineIndex].trim();
-            if (line && !line.startsWith('%')) {
-                nestLevels[lineIndex] = Math.max(nestLevels[lineIndex], structure.level);
-            }
+        if (!trimmed || trimmed.startsWith('%')) {
+            nestLevels[lineIndex] = Math.max(0, currentLevel);
+            continue;
         }
+
+        const {leadingClosings, netDelta} = analyzeStructureLine(line);
+
+        const lineLevel = Math.max(0, currentLevel - leadingClosings);
+        nestLevels[lineIndex] = lineLevel;
+
+        currentLevel = Math.max(0, lineLevel + netDelta);
     }
-    
+
     log('=== DEBUG: Unified nest levels ===');
     nestLevels.forEach((level, i) => {
         if (level > 0) {
             log(`  Line ${i + 1}: nest level ${level} - "${lines[i].trim()}"`);
         }
     });
-    
+
     return nestLevels;
 }
 
@@ -1122,6 +1053,30 @@ function applyBasicIndentation(lines: string[], config: FormatConfig, skipLines?
     return result;
 }
 
+function applyUnifiedStructureIndentation(lines: string[], config: FormatConfig, skipLines?: Set<number>): string[] {
+    const result = [...lines];
+    const nestLevels = calculateUnifiedNestLevels(lines, skipLines);
+
+    for (let i = 0; i < result.length; i++) {
+        if (skipLines?.has(i)) {
+            continue;
+        }
+
+        const line = result[i];
+        const trimmed = line.trim();
+
+        if (!trimmed) {
+            result[i] = '';
+            continue;
+        }
+
+        const indent = createIndent(nestLevels[i], config);
+        result[i] = indent + trimmed;
+    }
+
+    return result;
+}
+
 /**
  * 長い行の折り返し処理
  */
@@ -1364,9 +1319,11 @@ async function formatLaTeXDocument(): Promise<void> {
         refreshSkipLines();
         lines = indentDelimiterBlocks(lines, config, skipLines);
         refreshSkipLines();
+        lines = applyUnifiedStructureIndentation(lines, config, skipLines);
+        refreshSkipLines();
 
         const newContent = lines.join('\n');
-        
+
         log('=== DEBUG: Final result (first 15 lines) ===');
         lines.slice(0, 15).forEach((line, i) => log(`  ${i + 1}: "${line}"`));
         
@@ -1518,6 +1475,8 @@ async function formatLaTeXDocumentSync(document: vscode.TextDocument, options?: 
         lines = mergeBeginArguments(lines, skipLines);
         refreshSkipLines();
         lines = indentDelimiterBlocks(lines, config, skipLines);
+        refreshSkipLines();
+        lines = applyUnifiedStructureIndentation(lines, config, skipLines);
         refreshSkipLines();
 
         const newContent = lines.join('\n');
