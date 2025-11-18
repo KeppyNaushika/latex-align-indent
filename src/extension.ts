@@ -443,53 +443,6 @@ function matchStructureClosing(text: string, index: number): number {
     return 0;
 }
 
-function analyzeStructureLine(line: string): {leadingClosings: number, netDelta: number} {
-    const content = removeCommentForStructure(line);
-    let index = 0;
-    let leadingClosings = 0;
-    let netDelta = 0;
-    let encounteredContent = false;
-    
-    while (index < content.length) {
-        const char = content[index];
-        if (!encounteredContent && /\s/.test(char)) {
-            index++;
-            continue;
-        }
-
-        const closingLength = matchStructureClosing(content, index);
-        if (closingLength > 0) {
-            netDelta -= 1;
-            if (!encounteredContent) {
-                leadingClosings += 1;
-            }
-            encounteredContent = true;
-            index += closingLength;
-            continue;
-        }
-
-        const openingLength = matchStructureOpening(content, index);
-        if (openingLength > 0) {
-            netDelta += 1;
-            encounteredContent = true;
-            index += openingLength;
-            continue;
-        }
-
-        if (char === '\\') {
-            // エスケープした1文字を読み飛ばす
-            index += 2;
-        } else {
-            if (!/\s/.test(char)) {
-                encounteredContent = true;
-            }
-            index++;
-        }
-    }
-
-    return {leadingClosings, netDelta};
-}
-
 function calculateUnifiedNestLevels(lines: string[], skipLines?: Set<number>): number[] {
     const nestLevels = new Array(lines.length).fill(0);
     let currentLevel = 0;
@@ -508,12 +461,57 @@ function calculateUnifiedNestLevels(lines: string[], skipLines?: Set<number>): n
             continue;
         }
 
-        const {leadingClosings, netDelta} = analyzeStructureLine(line);
+        const content = removeCommentForStructure(line);
+        let index = 0;
+        let lineLevelAssigned = false;
 
-        const lineLevel = Math.max(0, currentLevel - leadingClosings);
-        nestLevels[lineIndex] = lineLevel;
+        while (index < content.length) {
+            const char = content[index];
+            if (!lineLevelAssigned && /\s/.test(char)) {
+                index++;
+                continue;
+            }
 
-        currentLevel = Math.max(0, lineLevel + netDelta);
+            const closingLength = matchStructureClosing(content, index);
+            if (closingLength > 0) {
+                currentLevel = Math.max(0, currentLevel - 1);
+                if (!lineLevelAssigned) {
+                    nestLevels[lineIndex] = currentLevel;
+                    lineLevelAssigned = true;
+                }
+                index += closingLength;
+                continue;
+            }
+
+            const openingLength = matchStructureOpening(content, index);
+            if (openingLength > 0) {
+                if (!lineLevelAssigned) {
+                    nestLevels[lineIndex] = currentLevel;
+                    lineLevelAssigned = true;
+                }
+                currentLevel++;
+                index += openingLength;
+                continue;
+            }
+
+            if (char === '\\') {
+                if (!lineLevelAssigned) {
+                    nestLevels[lineIndex] = currentLevel;
+                    lineLevelAssigned = true;
+                }
+                index += 2;
+            } else {
+                if (!lineLevelAssigned && !/\s/.test(char)) {
+                    nestLevels[lineIndex] = currentLevel;
+                    lineLevelAssigned = true;
+                }
+                index++;
+            }
+        }
+
+        if (!lineLevelAssigned) {
+            nestLevels[lineIndex] = currentLevel;
+        }
     }
 
     log('=== DEBUG: Unified nest levels ===');
@@ -842,19 +840,70 @@ function computeSkipLineSet(lines: string[], config: FormatConfig): Set<number> 
 /**
  * \begin{}と\end{}の前で自動改行
  */
+function readParameterToken(text: string, index: number): number {
+    const char = text[index];
+    if (char === '{' || char === '[') {
+        const closeChar = char === '{' ? '}' : ']';
+        let depth = 1;
+        let i = index + 1;
+        while (i < text.length) {
+            const current = text[i];
+            if (current === '\\') {
+                i += 2;
+                continue;
+            }
+            if (current === char) {
+                depth++;
+            } else if (current === closeChar) {
+                depth--;
+                if (depth === 0) {
+                    return i - index + 1;
+                }
+            }
+            i++;
+        }
+        return 0;
+    }
+    if (char === '\\' && text[index + 1] === '[') {
+        let i = index + 2;
+        while (i < text.length) {
+            if (text[i] === '\\' && text[i + 1] === ']') {
+                return i + 2 - index;
+            }
+            i++;
+        }
+        return 0;
+    }
+    return 0;
+}
+
+function isParameterOnlyText(text: string): boolean {
+    const trimmed = text.trim();
+    if (!trimmed) {
+        return false;
+    }
+    let index = 0;
+    while (index < trimmed.length) {
+        const char = trimmed[index];
+        if (/\s/.test(char)) {
+            index++;
+            continue;
+        }
+        const tokenLength = readParameterToken(trimmed, index);
+        if (tokenLength === 0) {
+            return false;
+        }
+        index += tokenLength;
+    }
+    return true;
+}
+
 function breakBeforeEnvironments(lines: string[], config: FormatConfig, skipLines?: Set<number>): string[] {
     if (!config.breakBeforeEnvironments) {
         return lines;
     }
     
     const result: string[] = [];
-    const isParameterOnly = (text: string): boolean => {
-        const trimmed = text.trim();
-        if (!trimmed) {
-            return false;
-        }
-        return /^((\[[^\]]*\]|\{[^}]*\})\s*)+$/.test(trimmed);
-    };
     
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
@@ -890,9 +939,7 @@ function breakBeforeEnvironments(lines: string[], config: FormatConfig, skipLine
                 hasChanges = true;
             }
             
-            // \begin{}の後にコンテンツがある場合は改行しない
-            // 単に改行だけ追加
-            if (after.trim() && !isParameterOnly(after)) {
+                        if (after.trim() && !isParameterOnlyText(after)) {
                 result.push(indent + `\\begin{${envType}}`);
                 currentLine = indent + createIndent(1, config) + after.trim();
                 hasChanges = true;
@@ -913,7 +960,7 @@ function breakBeforeEnvironments(lines: string[], config: FormatConfig, skipLine
             }
             
             // \end{}の後は改行しない
-            if (after.trim() && !isParameterOnly(after)) {
+            if (after.trim() && !isParameterOnlyText(after)) {
                 currentLine = indent + `\\end{${envType}}` + after;
                 hasChanges = true;
             }
